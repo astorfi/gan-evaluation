@@ -65,7 +65,8 @@ parser.add_argument("--nz", type=int, default=100, help="Size of z latent vector
 parser.add_argument("--ngf", type=int, default=3, help="Size of feature maps in generator")
 parser.add_argument("--ndf", type=int, default=3, help="Size of feature maps in discriminator")
 
-parser.add_argument("--sample_interval", type=int, default=1, help="interval between samples")
+parser.add_argument("--display_interval", type=int, default=10, help="interval between samples")
+parser.add_argument("--sample_interval", type=int, default=500, help="interval between generating fake samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=100, help="number of epops per model save")
 
@@ -155,7 +156,7 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
                                          shuffle=True, num_workers=opt.n_cpu)
 
 # Decide which device we want to run on
-device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
+device = torch.device("cuda:0" if (torch.cuda.is_available() and opt.num_gpu > 0) else "cpu")
 
 # Plot some training images
 real_batch = next(iter(dataloader))
@@ -176,7 +177,7 @@ plt.show()
 class Generator(nn.Module):
     def __init__(self, ngpu):
         super(Generator, self).__init__()
-        self.ngpu = opt.num_gpu
+        self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d(opt.nz, opt.ngf * 8, 4, 1, 0, bias=False),
@@ -269,7 +270,7 @@ discriminatorModel = Discriminator(opt.num_gpu).to(device)
 
 # Define cuda Tensors
 Tensor = torch.FloatTensor
-one = torch.FloatTensor(1)
+one = torch.FloatTensor([1])
 mone = one * -1
 
 
@@ -360,7 +361,7 @@ if opt.training:
             real_samples = Variable(samples.type(Tensor))
 
             # Sample noise as generator input
-            z = torch.randn(samples.shape[0], opt.nz, 1, 1, device=device)
+            z = torch.randn(opt.batch_size, opt.nz, 1, 1, device=device)
 
             # ---------------------
             #  Train Discriminator
@@ -386,7 +387,7 @@ if opt.training:
                 optimizer_D.zero_grad()
 
                 out_real = discriminatorModel(real_samples)
-                accuracy_real = discriminator_accuracy(torch.sigmoid(out_real), valid)
+                # accuracy_real = discriminator_accuracy(torch.sigmoid(out_real), valid)
                 errD_real = torch.mean(out_real.view(-1)).view(1)
                 errD_real.backward(one)
 
@@ -400,7 +401,7 @@ if opt.training:
                 fake_samples = generatorModel(z)
 
                 out_fake = discriminatorModel(fake_samples.detach()).view(-1)
-                accuracy_fake = discriminator_accuracy(torch.sigmoid(out_fake), fake)
+                # accuracy_fake = discriminator_accuracy(torch.sigmoid(out_fake), fake)
                 errD_fake = torch.mean(out_fake).view(1)
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
@@ -440,20 +441,25 @@ if opt.training:
             optimizer_G.step()
             gen_iterations += 1
 
-        if iters == opt.sample_interval:
-                print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.3f Loss_G: %.3f Accuracy_D_real: %.3f Accuracy_fake %.3f'
-                      % (epoch + 1, opt.n_epochs, i, len(dataloader),
-                         errD.item(), errG.item(), accuracy_real.item(), accuracy_fake.item()), flush=True)
+            if iters % opt.display_interval == 0:
+                    print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f'
+                          % (epoch + 1, opt.n_epochs, i, len(dataloader),
+                             errD.item(), errG.item()), flush=True)
 
-                    # Save Losses for plotting later
-                G_losses.append(errG.item())
-                D_losses.append(errD.item())
+                        # Save Losses for plotting later
+                    G_losses.append(errG.item())
+                    D_losses.append(errD.item())
 
-                # Check how the generator is doing by saving G's output on fixed_noise
-                if (iters % 500 == 0) or ((epoch == opt.n_epochs - 1) and (i == len(dataloader) - 1)):
-                    with torch.no_grad():
-                        fake = generatorModel(fixed_noise).detach().cpu()
-                    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+                    # Check how the generator is doing by saving G's output on fixed_noise
+                    if (iters % opt.sample_interval == 0) or ((epoch == opt.n_epochs - 1) and (i == len(dataloader) - 1)):
+                        with torch.no_grad():
+                            fake = generatorModel(fixed_noise).detach().cpu()
+                            gridimg = np.transpose(
+                                    vutils.make_grid(fake.to(device)[:64], padding=5, normalize=True).cpu(),
+                                    (1, 2, 0)).data.numpy()
+                            plt.imsave(os.path.join(opt.expPATH, "img_%d.png" % (iters)), gridimg)
+                        img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+
 
         # End of epoch
         epoch_end = time.time()
@@ -473,6 +479,9 @@ if opt.training:
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
+
+    np.save('G_losses', np.array(G_losses), allow_pickle=True)
+    np.save('D_losses', np.array(D_losses), allow_pickle=True)
 
     # Plot losses
     plt.figure(figsize=(10, 5))
