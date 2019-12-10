@@ -19,6 +19,7 @@ import torchvision.datasets as dset
 # import matplotlib
 # matplotlib.use('GTK3Agg')
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 from torch.utils.data import DataLoader
 from torchvision import datasets
@@ -39,7 +40,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=10, help="number of epochs of training")
-parser.add_argument("--batch_size", type=int, default=512, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
@@ -64,7 +65,7 @@ parser.add_argument("--nz", type=int, default=100, help="Size of z latent vector
 parser.add_argument("--ngf", type=int, default=3, help="Size of feature maps in generator")
 parser.add_argument("--ndf", type=int, default=3, help="Size of feature maps in discriminator")
 
-parser.add_argument("--sample_interval", type=int, default=100, help="interval between samples")
+parser.add_argument("--sample_interval", type=int, default=1, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=100, help="number of epops per model save")
 
@@ -268,7 +269,7 @@ discriminatorModel = Discriminator(opt.num_gpu).to(device)
 
 # Define cuda Tensors
 Tensor = torch.FloatTensor
-one = torch.FloatTensor([1])
+one = torch.FloatTensor(1)
 mone = one * -1
 
 
@@ -338,9 +339,18 @@ if opt.training:
         discriminatorModel.eval()
 
     gen_iterations = 0
+    # Lists to keep track of progress
+    img_list = []
+    G_losses = []
+    D_losses = []
+    iters = 0
     for epoch in range(opt.n_epochs):
         epoch_start = time.time()
-        for i, samples in enumerate(dataloader):
+        for i, data in enumerate(dataloader):
+            iters += 1
+
+            samples = data[0]
+            labels = data[1]
 
             # Adversarial ground truths
             valid = Variable(Tensor(samples.shape[0]).fill_(1.0), requires_grad=False)
@@ -375,7 +385,9 @@ if opt.training:
                 # reset gradients of discriminator
                 optimizer_D.zero_grad()
 
-                errD_real = torch.mean(discriminatorModel(real_samples).view(-1))
+                out_real = discriminatorModel(real_samples)
+                accuracy_real = discriminator_accuracy(torch.sigmoid(out_real), valid)
+                errD_real = torch.mean(out_real.view(-1)).view(1)
                 errD_real.backward(one)
 
                 # Measure discriminator's ability to classify real from generated samples
@@ -387,7 +399,9 @@ if opt.training:
                 # Generate a batch of images
                 fake_samples = generatorModel(z)
 
-                errD_fake = torch.mean(discriminatorModel(fake_samples.detach()).view(-1))
+                out_fake = discriminatorModel(fake_samples.detach()).view(-1)
+                accuracy_fake = discriminator_accuracy(torch.sigmoid(out_fake), fake)
+                errD_fake = torch.mean(out_fake).view(1)
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
 
@@ -419,46 +433,27 @@ if opt.training:
             optimizer_G.zero_grad()
 
             # Loss measures generator's ability to fool the discriminator
-            errG = torch.mean(discriminatorModel(fake_samples).view(-1))
+            errG = torch.mean(discriminatorModel(fake_samples).view(-1)).view(1)
             errG.backward(one)
 
             # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
             optimizer_G.step()
             gen_iterations += 1
 
+        if iters == opt.sample_interval:
+                print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.3f Loss_G: %.3f Accuracy_D_real: %.3f Accuracy_fake %.3f'
+                      % (epoch + 1, opt.n_epochs, i, len(dataloader),
+                         errD.item(), errG.item(), accuracy_real.item(), accuracy_fake.item()), flush=True)
 
-        with torch.no_grad():
+                    # Save Losses for plotting later
+                G_losses.append(errG.item())
+                D_losses.append(errD.item())
 
-            # Variables
-            real_samples_test = next(iter(dataloader_test))
-            real_samples_test = Variable(real_samples_test.type(Tensor))
-            z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
-
-            # Generator
-            fake_samples_test_temp = generatorModel(z)
-            fake_samples_test = torch.squeeze(autoencoderDecoder(fake_samples_test_temp.unsqueeze(dim=2)))
-
-            # Discriminator
-            # F.sigmoid() is needed as the discriminator outputs are logits without any sigmoid.
-            out_real_test = discriminatorModel(real_samples_test).view(-1)
-            accuracy_real_test = discriminator_accuracy(F.sigmoid(out_real_test), valid)
-
-            out_fake_test = discriminatorModel(fake_samples_test.detach()).view(-1)
-            accuracy_fake_test = discriminator_accuracy(F.sigmoid(out_fake_test), fake)
-
-            # Test autoencoder
-            reconst_samples_test = autoencoderModel(real_samples_test)
-
-        print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.3f Loss_G: %.3f Loss_D_real: %.3f Loss_D_fake %.3f'
-              % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
-                 errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
-
-        print(
-            "TEST: [Epoch %d/%d] [Batch %d/%d] [A loss: %.2f] [real accuracy: %.2f] [fake accuracy: %.2f]"
-            % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
-               a_loss_test.item(), accuracy_real_test,
-               accuracy_fake_test)
-            , flush=True)
+                # Check how the generator is doing by saving G's output on fixed_noise
+                if (iters % 500 == 0) or ((epoch == opt.n_epochs - 1) and (i == len(dataloader) - 1)):
+                    with torch.no_grad():
+                        fake = generatorModel(fixed_noise).detach().cpu()
+                    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
 
         # End of epoch
         epoch_end = time.time()
@@ -471,16 +466,49 @@ if opt.training:
                 'epoch': epoch + 1,
                 'Generator_state_dict': generatorModel.state_dict(),
                 'Discriminator_state_dict': discriminatorModel.state_dict(),
-                'Autoencoder_state_dict': autoencoderModel.state_dict(),
-                'Autoencoder_Decoder_state_dict': autoencoderDecoder.state_dict(),
                 'optimizer_G_state_dict': optimizer_G.state_dict(),
                 'optimizer_D_state_dict': optimizer_D.state_dict(),
-                'optimizer_A_state_dict': optimizer_A.state_dict(),
             }, os.path.join(opt.expPATH, "model_epoch_%d.pth" % (epoch + 1)))
 
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
+
+    # Plot losses
+    plt.figure(figsize=(10, 5))
+    plt.title("Generator and Discriminator Loss During Training")
+    plt.plot(G_losses, label="G")
+    plt.plot(D_losses, label="D")
+    plt.xlabel("iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.show()
+
+    # Figures
+    fig = plt.figure(figsize=(8, 8))
+    ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
+    ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+    plt.show()
+
+
+    #### Image Comparison ####
+    # Grab a batch of real images from the dataloader
+    real_batch = next(iter(dataloader))
+
+    # Plot the real images
+    plt.figure(figsize=(15, 15))
+    plt.subplot(1, 2, 1)
+    plt.axis("off")
+    plt.title("Real Images")
+    plt.imshow(
+        np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(), (1, 2, 0)))
+
+    # Plot the fake images from the last epoch
+    plt.subplot(1, 2, 2)
+    plt.axis("off")
+    plt.title("Fake Images")
+    plt.imshow(np.transpose(img_list[-1], (1, 2, 0)))
+    plt.show()
 
 if opt.finetuning:
 
@@ -535,13 +563,9 @@ if opt.generate:
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
-    autoencoderModel.load_state_dict(checkpoint['Autoencoder_state_dict'])
-    autoencoderDecoder.load_state_dict(checkpoint['Autoencoder_Decoder_state_dict'])
 
     # insert weights [required]
     generatorModel.eval()
-    autoencoderModel.eval()
-    autoencoderDecoder.eval()
 
     #######################################################
     #### Load real data and generate synthetic data #######
