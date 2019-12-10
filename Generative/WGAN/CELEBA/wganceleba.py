@@ -13,6 +13,8 @@ from subprocess import call
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
 from torchvision.utils import make_grid
+import torchvision.utils as vutils
+import torchvision.datasets as dset
 
 # import matplotlib
 # matplotlib.use('GTK3Agg')
@@ -33,18 +35,16 @@ parser = argparse.ArgumentParser()
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
 
 parser.add_argument("--DATASETPATH", type=str,
-                    default=os.path.expanduser('~/data/'),
+                    default=os.path.expanduser('~/data/celeba'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=300, help="number of epochs of training")
-parser.add_argument("--n_epochs_pretrain", type=int, default=500,
-                    help="number of epochs of pretraining the autoencoder")
+parser.add_argument("--n_epochs", type=int, default=10, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=512, help="size of the batches")
-parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
+parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
-parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
+parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
-parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
+parser.add_argument("--n_cpu", type=int, default=2, help="number of cpu threads to use during batch generation")
 parser.add_argument('--n_iter_D', type=int, default=5, help='number of D iters per each G iter')
 
 # Check the details
@@ -58,16 +58,20 @@ parser.add_argument("--multiplegpu", type=bool, default=True,
 parser.add_argument("--num_gpu", type=int, default=2, help="Number of GPUs in case of multiple GPU")
 
 parser.add_argument("--latent_dim", type=int, default=128, help="dimensionality of the latent space")
-parser.add_argument("--img_size", type=int, default=28, help="size of each image dimension")
-parser.add_argument("--channels", type=int, default=1, help="number of image channels")
+parser.add_argument("--image_size", type=int, default=64, help="size of each image dimension")
+parser.add_argument("--nc", type=int, default=3, help="Number of channels in the training images. For color images this is 3")
+parser.add_argument("--nz", type=int, default=100, help="Size of z latent vector (i.e. size of generator input)")
+parser.add_argument("--ngf", type=int, default=3, help="Size of feature maps in generator")
+parser.add_argument("--ndf", type=int, default=3, help="Size of feature maps in discriminator")
+
 parser.add_argument("--sample_interval", type=int, default=100, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=100, help="number of epops per model save")
 
-parser.add_argument("--training", type=bool, default=False, help="Training status")
+parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/'+experimentName),
                     help="Training status")
@@ -93,158 +97,139 @@ if torch.cuda.is_available() and not opt.cuda:
 # Activate CUDA
 device = torch.device("cuda:0" if opt.cuda else "cpu")
 
+
+####### Params ##########
+
+# # Number of workers for dataloader
+# workers = 2
+#
+# # Batch size during training
+# batch_size = 128
+#
+# # Spatial size of training images. All images will be resized to this
+# #   size using a transformer.
+# image_size = 64
+#
+# # Number of channels in the training images. For color images this is 3
+# nc = 3
+#
+# # Size of z latent vector (i.e. size of generator input)
+# nz = 100
+#
+# # Size of feature maps in generator
+# ngf = 64
+#
+# # Size of feature maps in discriminator
+# ndf = 64
+#
+# # Number of training epochs
+# num_epochs = 5
+#
+# # Learning rate for optimizers
+# # lr = 0.0002
+#
+# # Beta1 hyperparam for Adam optimizers
+# # beta1 = 0.5
+#
+# # Number of GPUs available. Use 0 for CPU mode.
+# ngpu = 1
+
 ##########################
 ### Dataset Processing ###
 ##########################
 
 # data = np.load(os.path.expanduser(opt.DATASETPATH), allow_pickle=True)
 
-mnist = datasets.MNIST(opt.DATASETPATH, train=True, transform=None, target_transform=None, download=True)
-data = mnist.data
-img_size = (32, 32, 1)
+# We can use an image folder dataset the way we have it setup.
+# Create the dataset
+dataset = dset.ImageFolder(root=opt.DATASETPATH,
+                           transform=transforms.Compose([
+                               transforms.Resize(opt.image_size),
+                               transforms.CenterCrop(opt.image_size),
+                               transforms.ToTensor(),
+                               transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                           ]))
+# Create the dataloader
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
+                                         shuffle=True, num_workers=opt.n_cpu)
 
-sampleSize = data.shape[0]
+# Decide which device we want to run on
+device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
-# Split train-test
-indices = np.random.permutation(sampleSize)
-training_idx, test_idx = indices[:int(0.8 * sampleSize)], indices[int(0.8 * sampleSize):]
-trainData = data[training_idx, :]
-testData = data[test_idx, :]
+# Plot some training images
+real_batch = next(iter(dataloader))
+plt.figure(figsize=(8,8))
+plt.axis("off")
+plt.title("Training Images")
+plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
+plt.show()
 
-# Trasnform Object array to float
-trainData = trainData.astype(np.float32)
-testData = testData.astype(np.float32)
-
-# ave synthetic data
-np.save(os.path.join(opt.expPATH, "dataTrain.npy"), trainData, allow_pickle=False)
-np.save(os.path.join(opt.expPATH, "dataTest.npy"), testData, allow_pickle=False)
-
-class Dataset:
-    def __init__(self, data, transform=None):
-
-        # Transform
-        self.transform = transform
-
-        # load data here
-        self.data = data
-        self.sampleSize = data.shape[0]
-        self.featureSize = data.shape[1]
-
-    def return_data(self):
-        return self.data
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
-        sample = self.data[idx]
-        sample = np.clip(sample, 0, 1)
-
-        if self.transform:
-           pass
-
-        return torch.from_numpy(sample)
-
-
-# Train data loader
-dataset_train_object = Dataset(data=trainData, transform=False)
-samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_train_object, replacement=True)
-dataloader_train = DataLoader(dataset_train_object, batch_size=opt.batch_size,
-                              shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
-
-# Test data loader
-dataset_test_object = Dataset(data=testData, transform=False)
-samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_test_object, replacement=True)
-dataloader_test = DataLoader(dataset_test_object, batch_size=opt.batch_size,
-                             shuffle=False, num_workers=1, drop_last=True, sampler=samplerRandom)
-
-# Generate random samples for test
-random_samples = next(iter(dataloader_test))
-feature_size = random_samples.size()[1]
+# # Generate random samples for test
+# random_samples = next(iter(dataloader_test))
+# feature_size = random_samples.size()[1]
 
 ####################
 ### Architecture ###
 ####################
 
 class Generator(nn.Module):
-    def __init__(self, img_size, latent_dim, dim):
+    def __init__(self, ngpu):
         super(Generator, self).__init__()
-
-        self.dim = dim
-        self.latent_dim = latent_dim
-        self.img_size = img_size
-        self.feature_sizes = (self.img_size[0] / 16, self.img_size[1] / 16)
-
-        self.latent_to_features = nn.Sequential(
-            nn.Linear(latent_dim, 8 * dim * self.feature_sizes[0] * self.feature_sizes[1]),
-            nn.ReLU()
+        self.ngpu = opt.num_gpu
+        self.main = nn.Sequential(
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d(opt.nz, opt.ngf * 8, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(opt.ngf * 8),
+            nn.ReLU(True),
+            # state size. (ngf*8) x 4 x 4
+            nn.ConvTranspose2d(opt.ngf * 8, opt.ngf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(opt.ngf * 4),
+            nn.ReLU(True),
+            # state size. (ngf*4) x 8 x 8
+            nn.ConvTranspose2d(opt.ngf * 4, opt.ngf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(opt.ngf * 2),
+            nn.ReLU(True),
+            # state size. (ngf*2) x 16 x 16
+            nn.ConvTranspose2d(opt.ngf * 2, opt.ngf, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(opt.ngf),
+            nn.ReLU(True),
+            # state size. (ngf) x 32 x 32
+            nn.ConvTranspose2d(opt.ngf, opt.nc, 4, 2, 1, bias=False),
+            nn.Tanh()
+            # state size. (nc) x 64 x 64
         )
 
-        self.features_to_image = nn.Sequential(
-            nn.ConvTranspose2d(8 * dim, 4 * dim, 4, 2, 1),
-            nn.ReLU(),
-            nn.BatchNorm2d(4 * dim),
-            nn.ConvTranspose2d(4 * dim, 2 * dim, 4, 2, 1),
-            nn.ReLU(),
-            nn.BatchNorm2d(2 * dim),
-            nn.ConvTranspose2d(2 * dim, dim, 4, 2, 1),
-            nn.ReLU(),
-            nn.BatchNorm2d(dim),
-            nn.ConvTranspose2d(dim, self.img_size[2], 4, 2, 1),
-            nn.Sigmoid()
-        )
+    def forward(self, input):
+        return self.main(input)
 
-    def forward(self, input_data):
-        # Map latent into appropriate size for transposed convolutions
-        x = self.latent_to_features(input_data)
-        # Reshape
-        x = x.view(-1, 8 * self.dim, self.feature_sizes[0], self.feature_sizes[1])
-        # Return generated image
-        return self.features_to_image(x)
-
-    def sample_latent(self, num_samples):
-        return torch.randn((num_samples, self.latent_dim))
 
 
 class Discriminator(nn.Module):
-    def __init__(self, img_size, dim):
-        """
-        img_size : (int, int, int)
-            Height and width must be powers of 2.  E.g. (32, 32, 1) or
-            (64, 128, 3). Last number indicates number of channels, e.g. 1 for
-            grayscale or 3 for RGB
-        """
+    def __init__(self, ngpu):
         super(Discriminator, self).__init__()
-
-        self.img_size = img_size
-
-        self.image_to_features = nn.Sequential(
-            nn.Conv2d(self.img_size[2], dim, 4, 2, 1),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(dim, 2 * dim, 4, 2, 1),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(2 * dim, 4 * dim, 4, 2, 1),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(4 * dim, 8 * dim, 4, 2, 1),
-            nn.Sigmoid()
+        self.ngpu = ngpu
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(opt.nc, opt.ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(opt.ndf, opt.ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(opt.ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(opt.ndf * 2, opt.ndf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(opt.ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(opt.ndf * 4, opt.ndf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(opt.ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(opt.ndf * 8, 1, 4, 1, 0, bias=False),
         )
 
-        # 4 convolutions of stride 2, i.e. halving of size everytime
-        # So output size will be 8 * (img_size / 2 ^ 4) * (img_size / 2 ^ 4)
-        output_size = 8 * dim * (img_size[0] / 16) * (img_size[1] / 16)
-        self.features_to_prob = nn.Sequential(
-            nn.Linear(output_size, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, input_data):
-        batch_size = input_data.size()[0]
-        x = self.image_to_features(input_data)
-        x = x.view(batch_size, -1)
-        return self.features_to_prob(x)
+    def forward(self, input):
+        return self.main(input)
 
 
 
@@ -264,33 +249,13 @@ def discriminator_accuracy(predicted, y_true):
     accuracy = 100.0 * correct / total
     return accuracy
 
-
-def sample_transform(sample):
-    """
-    Transform samples to their nearest integer
-    :param sample: Rounded vector.
-    :return:
-    """
-    sample[sample >= 0.5] = 1
-    sample[sample < 0.5] = 0
-    return sample
-
-
 def weights_init(m):
-    """
-    Custom weight initialization.
-    :param m: Input argument to extract layer type
-    :return: Initialized architecture
-    """
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         nn.init.normal_(m.weight.data, 0.0, 0.02)
     elif classname.find('BatchNorm') != -1:
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
-    if type(m) == nn.Linear:
-        torch.nn.init.xavier_uniform_(m.weight)
-        m.bias.data.fill_(0.01)
 
 
 #############
@@ -298,8 +263,8 @@ def weights_init(m):
 #############
 
 # Initialize generator and discriminator
-generatorModel = Generator()
-discriminatorModel = Discriminator()
+generatorModel = Generator(opt.num_gpu).to(device)
+discriminatorModel = Discriminator(opt.num_gpu).to(device)
 
 # Define cuda Tensors
 Tensor = torch.FloatTensor
@@ -312,20 +277,29 @@ if torch.cuda.device_count() > 1 and opt.multiplegpu:
   generatorModel = nn.DataParallel(generatorModel, list(range(opt.num_gpu)))
   discriminatorModel = nn.DataParallel(discriminatorModel, list(range(opt.num_gpu)))
 
-if opt.cuda:
+
+if torch.cuda.is_available():
     """
     model.cuda() will change the model inplace while input.cuda() 
     will not change input inplace and you need to do input = input.cuda()
     ref: https://discuss.pytorch.org/t/when-the-parameters-are-set-on-cuda-the-backpropagation-doesnt-work/35318
     """
-    generatorModel.cuda()
-    discriminatorModel.cuda()
+    # generatorModel.cuda()
+    # discriminatorModel.cuda()
     one, mone = one.cuda(), mone.cuda()
     Tensor = torch.cuda.FloatTensor
 
 # Weight initialization
 generatorModel.apply(weights_init)
 discriminatorModel.apply(weights_init)
+
+# Create batch of latent vectors that we will use to visualize
+#  the progression of the generator
+fixed_noise = torch.randn(64, opt.nz, 1, 1, device=device)
+
+# Establish convention for real and fake labels during training
+real_label = 1
+fake_label = 0
 
 # Optimizers
 optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
@@ -366,7 +340,7 @@ if opt.training:
     gen_iterations = 0
     for epoch in range(opt.n_epochs):
         epoch_start = time.time()
-        for i, samples in enumerate(dataloader_train):
+        for i, samples in enumerate(dataloader):
 
             # Adversarial ground truths
             valid = Variable(Tensor(samples.shape[0]).fill_(1.0), requires_grad=False)
@@ -376,45 +350,7 @@ if opt.training:
             real_samples = Variable(samples.type(Tensor))
 
             # Sample noise as generator input
-            z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
-
-            # -----------------
-            #  Train Generator
-            # -----------------
-
-            # We’re supposed to clear the gradients each iteration before calling loss.backward() and optimizer.step().
-            #
-            # In PyTorch, we need to set the gradients to zero before starting to do backpropragation because PyTorch
-            # accumulates the gradients on subsequent backward passes. This is convenient while training RNNs. So,
-            # the default action is to accumulate (i.e. sum) the gradients on every loss.backward() call.
-            #
-            # Because of this, when you start your training loop, ideally you should zero out the gradients so
-            # that you do the parameter update correctly. Else the gradient would point in some other direction
-            # than the intended direction towards the minimum (or maximum, in case of maximization objectives).
-
-            # Since the backward() function accumulates gradients, and you don’t want to mix up gradients between
-            # minibatches, you have to zero them out at the start of a new minibatch. This is exactly like how a general
-            # (additive) accumulator variable is initialized to 0 in code.
-
-            for p in discriminatorModel.parameters():  # reset requires_grad
-                p.requires_grad = False
-
-            # Zero grads
-            optimizer_G.zero_grad()
-
-            # Generate a batch of images
-            fake_samples = generatorModel(z)
-
-            # uncomment if there is no autoencoder
-            fake_samples = torch.squeeze(autoencoderDecoder(fake_samples.unsqueeze(dim=2)))
-
-            # Loss measures generator's ability to fool the discriminator
-            errG = torch.mean(discriminatorModel(fake_samples).view(-1))
-            errG.backward(one)
-
-            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
-            optimizer_G.step()
-            gen_iterations += 1
+            z = torch.randn(samples.shape[0], opt.nz, 1, 1, device=device)
 
             # ---------------------
             #  Train Discriminator
@@ -448,12 +384,48 @@ if opt.training:
                 # operations, and therefore the subgraph involving this view is not recorded.
                 # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
 
+                # Generate a batch of images
+                fake_samples = generatorModel(z)
+
                 errD_fake = torch.mean(discriminatorModel(fake_samples.detach()).view(-1))
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
 
                 # Optimizer step
                 optimizer_D.step()
+
+            # -----------------
+            #  Train Generator
+            # -----------------
+
+            # We’re supposed to clear the gradients each iteration before calling loss.backward() and optimizer.step().
+            #
+            # In PyTorch, we need to set the gradients to zero before starting to do backpropragation because PyTorch
+            # accumulates the gradients on subsequent backward passes. This is convenient while training RNNs. So,
+            # the default action is to accumulate (i.e. sum) the gradients on every loss.backward() call.
+            #
+            # Because of this, when you start your training loop, ideally you should zero out the gradients so
+            # that you do the parameter update correctly. Else the gradient would point in some other direction
+            # than the intended direction towards the minimum (or maximum, in case of maximization objectives).
+
+            # Since the backward() function accumulates gradients, and you don’t want to mix up gradients between
+            # minibatches, you have to zero them out at the start of a new minibatch. This is exactly like how a general
+            # (additive) accumulator variable is initialized to 0 in code.
+
+            for p in discriminatorModel.parameters():  # reset requires_grad
+                p.requires_grad = False
+
+            # Zero grads
+            optimizer_G.zero_grad()
+
+            # Loss measures generator's ability to fool the discriminator
+            errG = torch.mean(discriminatorModel(fake_samples).view(-1))
+            errG.backward(one)
+
+            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
+            optimizer_G.step()
+            gen_iterations += 1
+
 
         with torch.no_grad():
 
