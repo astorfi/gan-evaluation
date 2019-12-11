@@ -39,7 +39,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data/celeba'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=10, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=50, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
