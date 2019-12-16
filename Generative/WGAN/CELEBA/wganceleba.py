@@ -478,8 +478,8 @@ if opt.training:
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
 
-    np.save('G_losses', np.array(G_losses), allow_pickle=True)
-    np.save('D_losses', np.array(D_losses), allow_pickle=True)
+    # np.save('G_losses', np.array(G_losses), allow_pickle=True)
+    # np.save('D_losses', np.array(D_losses), allow_pickle=True)
 
     # Plot losses
     plt.figure(figsize=(10, 5))
