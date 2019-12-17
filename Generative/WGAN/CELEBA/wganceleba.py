@@ -39,7 +39,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data/celeba'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=50, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=40, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.00005, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
@@ -62,13 +62,13 @@ parser.add_argument("--latent_dim", type=int, default=64, help="dimensionality o
 parser.add_argument("--image_size", type=int, default=64, help="size of each image dimension")
 parser.add_argument("--nc", type=int, default=3, help="Number of channels in the training images. For color images this is 3")
 parser.add_argument("--nz", type=int, default=64, help="Size of z latent vector (i.e. size of generator input)")
-parser.add_argument("--ngf", type=int, default=3, help="Size of feature maps in generator")
-parser.add_argument("--ndf", type=int, default=3, help="Size of feature maps in discriminator")
+parser.add_argument("--ngf", type=int, default=64, help="Size of feature maps in generator")
+parser.add_argument("--ndf", type=int, default=64, help="Size of feature maps in discriminator")
 
 parser.add_argument("--display_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--sample_interval", type=int, default=2000, help="interval between generating fake samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
-parser.add_argument("--epoch_save_model_freq", type=int, default=5, help="number of epops per model save")
+parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epochs per model save")
 
 parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
@@ -159,13 +159,13 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size,
 device = torch.device("cuda:0" if (torch.cuda.is_available() and opt.num_gpu > 0) else "cpu")
 
 
-# Plot some training images
-real_batch = next(iter(dataloader))
-plt.figure(figsize=(8,8))
-plt.axis("off")
-plt.title("Training Images")
-plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
-plt.show()
+# # Plot some training images
+# real_batch = next(iter(dataloader))
+# plt.figure(figsize=(8,8))
+# plt.axis("off")
+# plt.title("Training Images")
+# plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
+# plt.show()
 
 # # Generate random samples for test
 # random_samples = next(iter(dataloader_test))
@@ -369,13 +369,13 @@ if opt.training:
             for p in discriminatorModel.parameters():  # reset requires_grad
                 p.requires_grad = True
 
-            # train the discriminator n_iter_D times
-            if gen_iterations < 25 or gen_iterations % 500 == 0:
-                n_iter_D = 100
-            else:
-                n_iter_D = opt.n_iter_D
+            # # train the discriminator n_iter_D times
+            # if gen_iterations < 25 or gen_iterations % 500 == 0:
+            #     n_iter_D = 100
+            # else:
+            #     n_iter_D = opt.n_iter_D
             j = 0
-            while j < n_iter_D:
+            while j < opt.n_iter_D:
                 j += 1
 
                 # clamp parameters to a cube
@@ -472,7 +472,7 @@ if opt.training:
                 'Discriminator_state_dict': discriminatorModel.state_dict(),
                 'optimizer_G_state_dict': optimizer_G.state_dict(),
                 'optimizer_D_state_dict': optimizer_D.state_dict(),
-            }, os.path.join(opt.expPATH, "model_epoch_%d.pth" % (epoch + 1)))
+            }, os.path.join(opt.expPATH, "model_generative_epoch_%d.pth" % (epoch + 1)))
 
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
@@ -481,41 +481,41 @@ if opt.training:
     # np.save('G_losses', np.array(G_losses), allow_pickle=True)
     # np.save('D_losses', np.array(D_losses), allow_pickle=True)
 
-    # Plot losses
-    plt.figure(figsize=(10, 5))
-    plt.title("Generator and Discriminator Loss During Training")
-    plt.plot(G_losses, label="G")
-    plt.plot(D_losses, label="D")
-    plt.xlabel("iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.show()
-
-    # Figures
-    fig = plt.figure(figsize=(8, 8))
-    ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
-    ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
-    plt.show()
-
-
-    #### Image Comparison ####
-    # Grab a batch of real images from the dataloader
-    real_batch = next(iter(dataloader))
-
-    # Plot the real images
-    plt.figure(figsize=(15, 15))
-    plt.subplot(1, 2, 1)
-    plt.axis("off")
-    plt.title("Real Images")
-    plt.imshow(
-        np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(), (1, 2, 0)))
-
-    # Plot the fake images from the last epoch
-    plt.subplot(1, 2, 2)
-    plt.axis("off")
-    plt.title("Fake Images")
-    plt.imshow(np.transpose(img_list[-1], (1, 2, 0)))
-    plt.show()
+    # # Plot losses
+    # plt.figure(figsize=(10, 5))
+    # plt.title("Generator and Discriminator Loss During Training")
+    # plt.plot(G_losses, label="G")
+    # plt.plot(D_losses, label="D")
+    # plt.xlabel("iterations")
+    # plt.ylabel("Loss")
+    # plt.legend()
+    # plt.show()
+    #
+    # # Figures
+    # fig = plt.figure(figsize=(8, 8))
+    # ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
+    # ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+    # plt.show()
+    #
+    #
+    # #### Image Comparison ####
+    # # Grab a batch of real images from the dataloader
+    # real_batch = next(iter(dataloader))
+    #
+    # # Plot the real images
+    # plt.figure(figsize=(15, 15))
+    # plt.subplot(1, 2, 1)
+    # plt.axis("off")
+    # plt.title("Real Images")
+    # plt.imshow(
+    #     np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(), (1, 2, 0)))
+    #
+    # # Plot the fake images from the last epoch
+    # plt.subplot(1, 2, 2)
+    # plt.axis("off")
+    # plt.title("Fake Images")
+    # plt.imshow(np.transpose(img_list[-1], (1, 2, 0)))
+    # plt.show()
 
 if opt.finetuning:
 
@@ -566,7 +566,7 @@ if opt.generate:
     #####################################
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_50.pth"))
+    checkpoint = torch.load(os.path.join(opt.expPATH, "model_generative_epoch_40.pth"))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
