@@ -40,7 +40,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=100, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=20, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.00005, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
@@ -69,12 +69,12 @@ parser.add_argument("--ndf", type=int, default=32, help="Size of feature maps in
 parser.add_argument("--display_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--sample_interval", type=int, default=2000, help="interval between generating fake samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
-parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epochs per model save")
+parser.add_argument("--epoch_save_model_freq", type=int, default=5, help="number of epochs per model save")
 
-parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--training", type=bool, default=False, help="Training status")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/'+experimentName),
                     help="Training status")
@@ -571,7 +571,7 @@ if opt.generate:
     #####################################
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.expPATH, "model_generative_epoch_40.pth"))
+    checkpoint = torch.load(os.path.join(opt.expPATH, "model_generative_epoch_20.pth"))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
@@ -585,7 +585,7 @@ if opt.generate:
 
     #### Image Comparison ####
     # Grab a batch of real images from the dataloader
-    real_batch = next(iter(dataloader))
+    real_batch = next(iter(dataloaderTrain))
 
     # Plot the real images
     plt.figure(figsize=(15, 15))
@@ -605,7 +605,7 @@ if opt.generate:
     plt.subplot(1, 2, 2)
     plt.axis("off")
     plt.title("Fake Images")
-    plt.imshow(np.transpose(grid, (1, 2, 0)))
+    plt.imshow(np.transpose(grid.cpu().detach().numpy(), (1, 2, 0)))
     plt.show()
 
     # # Load real data

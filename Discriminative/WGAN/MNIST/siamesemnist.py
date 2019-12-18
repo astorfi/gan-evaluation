@@ -9,10 +9,14 @@ from subprocess import call
 import matplotlib.pyplot as plt
 from sklearn import metrics
 
+import PIL.ImageOps
+
 # Pytorch library
+import torchvision
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
 from torchvision.utils import make_grid
+import torchvision.utils as vutils
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torch.autograd import Variable
@@ -22,22 +26,21 @@ import torch.nn.functional as F
 import torch
 
 # experimentName is the current file name without extension
-evaluationName = 'wgancnnmimic'
+experimentName = os.path.splitext(os.path.basename(__file__))[0]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--DATASETPATH", type=str,
-                    default=os.path.expanduser('~/data/PhisioNet/MIMIC/processed/out_binary.matrix'),
+                    default=os.path.expanduser('~/data'),
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=512, help="size of the batches")
 parser.add_argument("--num_pairs", type=int, default=100000, help="number of pairs")
+parser.add_argument("--image_size", type=int, default=32, help="img size")
 
-parser.add_argument("--training", type=bool, default=False, help="Training status")
+parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Resume training or not")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/'+evaluationName),
-                    help="Training status")
-parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/'+evaluationName+'/model'),
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
@@ -46,10 +49,14 @@ parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first 
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
 
-parser.add_argument("--sample_interval", type=int, default=100, help="interval between samples")
+parser.add_argument("--nc", type=int, default=1, help="Number of channels in the training images. For color images this is 3")
+parser.add_argument("--nz", type=int, default=64, help="Size of z latent vector (i.e. size of generator input)")
+parser.add_argument("--ndf", type=int, default=16, help="Size of feature maps in discriminator")
+
+
+parser.add_argument("--sample_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=False, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=100, help="number of epops per model save")
-
 
 parser.add_argument("--cuda", type=bool, default=True,
                     help="CUDA activation")
@@ -63,11 +70,9 @@ print(opt)
 # Create experiments DIR
 if not os.path.exists(opt.expPATH):
     os.system('mkdir {0}'.format(opt.expPATH))
-if not os.path.exists(opt.modelPATH):
-    os.system('mkdir {0}'.format(opt.modelPATH))
 
 # Random seed for pytorch
-opt.manualSeed = random.randint(1, 10000) # fix seed
+opt.manualSeed = random.randint(1, 10000)  # fix seed
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
@@ -85,136 +90,160 @@ device = torch.device("cuda:0" if opt.cuda else "cpu")
 ### Dataset Processing ###
 ##########################
 
-# ave synthetic data
-trainData = np.load(os.path.join(opt.expPATH, "dataTrain.npy"), allow_pickle=False)
-testData = np.load(os.path.join(opt.expPATH, "dataTest.npy"), allow_pickle=False)
-synData = np.load(os.path.join(opt.expPATH, "synthetic.npy"), allow_pickle=False)
+transform = transforms.Compose([
+    transforms.Resize(opt.image_size),
+    transforms.CenterCrop(opt.image_size),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,)),
+])
 
-class Dataset:
-    # TRIAINING SETUP: GEN: train-train IMP: train-test
-    # TESTING SETUP: GEN: synthetic-train IMP: synthetic-test
-    def __init__(self, trainData, testData, synData, trainstatus, num_pairs=1000, transform=None):
+datasetTrain = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=True, transform=transform, target_transform=None,
+                                          download=True)
+datasetTest = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=False, transform=transform, target_transform=None,
+                                         download=True)
 
-        # Transform
+print('Train data shape:', type(datasetTrain.data))
+print('Train labels shape:', datasetTrain.targets.shape)
+
+print('Test data shape:', datasetTest.data.shape)
+print('Test labels shape:', datasetTest.targets.shape)
+
+
+class SiameseDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset, invert_status=True, transform=None):
+        self.data = dataset.data
+        self.targets = dataset.targets
+        self.dataSize = self.data.shape[0]
         self.transform = transform
-        self.num_pairs = num_pairs
+        self.invert_status = invert_status
+        self.transfortoPIL = torchvision.transforms.ToPILImage()
 
-        # load data here
-        self.trainData = trainData
-        self.testData = testData
-        self.synData = synData
-        self.featureSize = trainData.shape[1]
-
-        # Create data matrix
-        self.data = np.zeros((self.num_pairs, self.featureSize, 2), dtype=trainData.dtype)
-        self.label = np.zeros((self.num_pairs), dtype=trainData.dtype)
+        # count = 0
+        # while count < self.num_pairs:
+        #     rand_idx = np.random.randint(self.dataSize, size=1)
+        #     sample0_tuple = (self.data[rand_idx],self.targets[rand_idx])
+        #     same_class_status = random.randint(0, 1)
 
 
-        if trainstatus:
-            idx = 0
-            while idx < int(self.num_pairs):
 
-                # Genuine pair
-                a = self.trainData[random.randint(0, self.trainData.shape[0]-1), :]
-                b = self.trainData[random.randint(0, self.trainData.shape[0]-1), :]
-                genPair = np.stack([a, b], axis=-1)
-                self.data[idx] = genPair
-                self.label[idx] = 0
-                idx += 1
+    def __getitem__(self, index):
 
-                # Imposter pair
-                a = self.trainData[random.randint(0, self.trainData.shape[0]-1), :]
-                b = self.testData[random.randint(0, self.testData.shape[0]-1), :]
-                impPair = np.stack([a, b], axis=-1)
-                self.data[idx] = impPair
-                self.label[idx] = 1
-                idx += 1
-
+        rand_idx = np.random.randint(self.dataSize, size=1)
+        img0_tuple = (self.data[rand_idx], self.targets[rand_idx])
+        same_class_status = random.randint(0, 1)
+        if same_class_status:
+            while True:
+                rand_idx = np.random.randint(self.dataSize, size=1)
+                # keep looping till the same class image is found
+                img1_tuple = (self.data[rand_idx], self.targets[rand_idx])
+                if img0_tuple[1] == img1_tuple[1]:
+                    break
         else:
-            idx = 0
-            while idx < int(self.num_pairs):
+            while True:
+                rand_idx = np.random.randint(self.dataSize, size=1)
+                # keep looping till a different class image is found
+                img1_tuple = (self.data[rand_idx], self.targets[rand_idx])
+                if img0_tuple[1] != img1_tuple[1]:
+                    break
 
-                # Genuine pair
-                a = self.trainData[random.randint(0, self.trainData.shape[0]-1), :]
-                b = self.synData[random.randint(0, self.synData.shape[0]-1), :]
-                genPair = np.stack([a, b], axis=-1)
-                self.data[idx,:] = genPair
-                self.label[idx] = 0
-                idx += 1
-
-                # Imposter pair
-                a = self.synData[random.randint(0, self.synData.shape[0]-1), :]
-                b = self.testData[random.randint(0, self.testData.shape[0]-1), :]
-                impPair = np.stack([a, b], axis=-1)
-                self.data[idx, :] = impPair
-                self.label[idx] = 1
-                idx += 1
+        # samples
+        img0 = img0_tuple[0]
+        img1 = img1_tuple[0]
 
 
-    def return_data(self):
-        return self.data, self.label
+        # As transform needs images, we first transform tensor to img
+        if self.invert_status:
+            img0 = self.transfortoPIL(img0)
+            img1 = self.transfortoPIL(img1)
+
+        if self.transform is not None:
+            img0 = self.transform(img0)
+            img1 = self.transform(img1)
+
+        return img0, img1, torch.from_numpy(np.array([int(img0_tuple[1] != img1_tuple[1])], dtype=np.float32))
 
     def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
-        pair = self.data[idx]
-        label = self.label[idx]
-        pair = np.clip(pair, 0, 1)
-        sample = {'pair': torch.from_numpy(np.asarray(pair)), 'label': torch.from_numpy(np.asarray(label))}
-
-        if self.transform:
-           pass
-
-        return sample
-
+        return self.dataSize
 
 # Train data loader
-dataset_train_object = Dataset(trainData, testData, synData, num_pairs=opt.num_pairs, trainstatus=True, transform=False)
+dataset_train_object = SiameseDataset(datasetTrain, invert_status=True, transform=transform)
 samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_train_object, replacement=True)
-dataloader_train = DataLoader(dataset_train_object, batch_size=opt.batch_size,
+dataloaderTrain = DataLoader(dataset_train_object, batch_size=opt.batch_size,
                               shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
 # Test data loader
-dataset_test_object = Dataset(trainData, testData, synData, num_pairs=opt.num_pairs, trainstatus=False, transform=False)
+dataset_test_object = SiameseDataset(datasetTest, invert_status=True, transform=transform)
 samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_test_object, replacement=True)
-dataloader_test = DataLoader(dataset_test_object, batch_size=opt.batch_size,
-                             shuffle=False, num_workers=1, drop_last=True, sampler=samplerRandom)
+dataloaderTest = DataLoader(dataset_test_object, batch_size=opt.batch_size,
+                              shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
-# Generate random samples for test
-random_samples = next(iter(dataloader_test))
-feature_size = random_samples['pair'].size()[1]
+
+# Show some training pairs
+real_batch = next(iter(dataloaderTrain))
+concatenated = torch.cat((real_batch[0].to(device)[:8],real_batch[1].to(device)[:8]),0)
+
+plt.figure(figsize=(2,8))
+plt.axis("off")
+plt.title("Training Pairs")
+plt.imshow(np.transpose(torchvision.utils.make_grid(concatenated).cpu(),(1,2,0)))
+plt.show()
 
 ####################
 ### Architecture ###
 ####################
 
 class Model(nn.Module):
-    def __init__(self):
+    def __init__(self, ngpu):
         super(Model, self).__init__()
+        self.ngpu = ngpu
+        self.conv1 = nn.ModuleDict({
+            'conv': nn.Conv2d(opt.nc, opt.ndf, 4, 2, 1, bias=False),
+            'activation': nn.LeakyReLU(0.2, inplace=True)
+        })
+        self.conv2 = nn.ModuleDict({
+            'conv': nn.Conv2d(opt.ndf, opt.ndf * 2, 4, 2, 1, bias=False),
+            'bn': nn.BatchNorm2d(opt.ndf * 2),
+            'activation': nn.LeakyReLU(0.2, inplace=True)
+        })
+        self.conv3 = nn.ModuleDict({
+            'conv': nn.Conv2d(opt.ndf * 2, opt.ndf * 4, 4, 2, 1, bias=False),
+            'bn': nn.BatchNorm2d(opt.ndf * 4),
+            'activation': nn.LeakyReLU(0.2, inplace=True)
+        })
+        self.conv4 = nn.ModuleDict({
+            'conv': nn.Conv2d(opt.ndf * 4, opt.ndf * 8, 4, 2, 1, bias=False),
+            'bn': nn.BatchNorm2d(opt.ndf * 8),
+            'activation': nn.LeakyReLU(0.2, inplace=True)
+        })
 
-        # Discriminator's parameters
-        self.disDim = 128
+        self.conv5 = nn.ModuleDict({
+            'conv': nn.Conv2d(opt.ndf * 8, opt.ndf * 16, 2, 1, 0, bias=False),
+        })
 
-        self.model = nn.Sequential(
-            nn.Linear(dataset_train_object.featureSize, 4 * self.disDim),
-            nn.BatchNorm1d(4 * self.disDim, eps=0.001, momentum=0.01),
-            nn.ReLU(True),
-            nn.Linear(4 * self.disDim, 2 * self.disDim),
-            nn.BatchNorm1d(2 * self.disDim, eps=0.001, momentum=0.01),
-            nn.ReLU(True),
-            nn.Linear(2 * self.disDim, self.disDim),
-            nn.BatchNorm1d(self.disDim, eps=0.001, momentum=0.01),
-            nn.Sigmoid()
-        )
+    def forward_pass(self, input):
+        # Layer 1
+        out = self.conv1['conv'](input)
+        out = self.conv1['activation'](out)
 
-    def forward_pass(self, x):
-        # Feeding the model
-        output = self.model(x)
-        return output
+        # Layer 2
+        out = self.conv2['conv'](out)
+        out = self.conv2['bn'](out)
+        out = self.conv2['activation'](out)
+
+        # Layer 3
+        out = self.conv3['conv'](out)
+        out = self.conv3['bn'](out)
+        out = self.conv3['activation'](out)
+
+        # Layer 4
+        out = self.conv4['conv'](out)
+        out = self.conv4['bn'](out)
+        out = self.conv4['activation'](out)
+
+        # Layer 5
+        out = self.conv5['conv'](out)
+
+        return torch.squeeze(out)
 
     def forward(self, input1, input2):
         output1 = self.forward_pass(input1)
@@ -234,7 +263,12 @@ class ContrastiveLoss(torch.nn.Module):
         self.margin = margin
 
     def forward(self, output1, output2, label):
-        euclidean_distance = F.pairwise_distance(output1, output2, keepdim=False)
+        try:
+            euclidean_distance = F.pairwise_distance(output1, output2, keepdim=False)
+        except:
+            print(output1.shape)
+            print(output2.shape)
+            sys.exit()
         loss_contrastive = torch.mean((1 - label) * torch.pow(euclidean_distance, 2) +
                                       (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
 
@@ -263,10 +297,12 @@ def weights_init(m):
 #############
 
 # Initialize model
-Model = Model()
+Model = Model(opt.num_gpu).to(device)
 
 # Cost function
 criterion = ContrastiveLoss()
+
+####### CUDA ######
 
 # Define cuda Tensors
 Tensor = torch.FloatTensor
@@ -275,21 +311,28 @@ mone = one * -1
 
 
 if torch.cuda.device_count() > 1 and opt.multiplegpu:
-  print("Let's use", torch.cuda.device_count(), "GPUs!")
-  Model = nn.DataParallel(Model, list(range(opt.num_gpu)))
 
-if opt.cuda:
+  gpu_idx = list(range(opt.num_gpu))
+  Model = nn.DataParallel(Model, device_ids=[gpu_idx[-1]])
+  criterion = nn.DataParallel(criterion, device_ids=[gpu_idx[-1]])
+
+
+if torch.cuda.is_available():
     """
-    model.cuda() will change the model inplace while input.cuda()
+    model.cuda() will change the model inplace while input.cuda() 
     will not change input inplace and you need to do input = input.cuda()
     ref: https://discuss.pytorch.org/t/when-the-parameters-are-set-on-cuda-the-backpropagation-doesnt-work/35318
     """
-    Model.cuda()
+    # generatorModel.cuda()
+    # discriminatorModel.cuda()
     one, mone = one.cuda(), mone.cuda()
     Tensor = torch.cuda.FloatTensor
 
 # Weight initialization
 Model.apply(weights_init)
+
+
+######
 
 # Optimizers
 optimizer = torch.optim.Adam(Model.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
@@ -324,45 +367,47 @@ if opt.training:
     iter_count = 0
     for epoch in range(opt.n_epochs):
         epoch_start = time.time()
-        for i, samples in enumerate(dataloader_train):
+        for i, data in enumerate(dataloaderTrain):
             iter_count += 1
 
-            pairs = samples['pair']
-            labels = samples['label']
+            # load data
+            img0 = data[0]
+            img1 = data[1]
+            labels = data[2]
 
             # Configure input
-            pairs = Variable(pairs.type(Tensor))
+            img0 = Variable(img0.type(Tensor))
+            img1 = Variable(img1.type(Tensor))
             labels = Variable(labels.type(Tensor))
 
             # Zero grads
             optimizer.zero_grad()
 
             # Generate a batch of images
-            pair_left, pair_right = pairs[:, :, 0], pairs[:, :, 1]
-            out1, out2 = Model(pair_left, pair_right)
+            out1, out2 = Model(img0, img1)
             loss = criterion(out1, out2, labels)
             loss.backward()
 
             # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
             optimizer.step()
 
-
             if iter_count % opt.sample_interval == 0:
                 print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss: %.3f'
-                      % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
+                      % (epoch + 1, opt.n_epochs, i, len(dataloaderTrain),
                          loss.item()), flush=True)
 
         with torch.no_grad():
 
             # Variables
-            samples_test = next(iter(dataloader_test))
+            samples_test = next(iter(dataloaderTest))
 
             # Configure input
-            pairs_test = Variable(samples_test['pair'].type(Tensor))
-            labels_test = Variable(samples_test['label'].type(Tensor))
+            img_test_0 = Variable(samples_test[0].type(Tensor))
+            img_test_1 = Variable(samples_test[1].type(Tensor))
+            labels_test = Variable(samples_test[2].type(Tensor))
 
             # Evaluate with model
-            pairs_test_left, pairs_test_right = pairs_test[:, :, 0], pairs_test[:, :, 1]
+            pairs_test_left, pairs_test_right = img_test_0, img_test_1
             out1_test, out2_test = Model(pairs_test_left, pairs_test_right)
             euclidean_distance = F.pairwise_distance(out1_test, out2_test, keepdim=False)
 
@@ -380,7 +425,6 @@ if opt.training:
 
             # Refer to https://en.wikipedia.org/w/index.php?title=Information_retrieval&oldid=793358396#Average_precision
             ap = metrics.average_precision_score(y_true, y_scores)
-
 
             # AUC and AP reporting
             print(
@@ -400,16 +444,15 @@ if opt.training:
                 'epoch': epoch + 1,
                 'model_state_dict': Model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-            }, os.path.join(opt.modelPATH, "model_siamese_epoch_%d.pth" % (epoch + 1)))
+            }, os.path.join(opt.expPATH, "model_siamese_epoch_%d.pth" % (epoch + 1)))
 
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
-            call("ls -d -1tr " + opt.modelPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
-
+            # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
 
     # When training is finished, the ROC outputs should be saved
-    np.save(os.path.join(opt.expPATH, "fpr_"+str(opt.manualSeed)+".npy"), fpr, allow_pickle=False)
-    np.save(os.path.join(opt.expPATH, "tpr_"+str(opt.manualSeed)+".npy"), tpr, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "fpr_" + str(opt.manualSeed) + ".npy"), fpr, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "tpr_" + str(opt.manualSeed) + ".npy"), tpr, allow_pickle=False)
 
 
 else:
@@ -448,7 +491,7 @@ else:
         roc_auc = auc(fpr, tpr)
         aucs.append(roc_auc)
         plt.plot(fpr, tpr, lw=1, alpha=0.3,
-                 label='ROC run %d (AUC = %0.2f)' % (i+1, roc_auc))
+                 label='ROC run %d (AUC = %0.2f)' % (i + 1, roc_auc))
 
         i += 1
     plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r',
