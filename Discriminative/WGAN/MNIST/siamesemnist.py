@@ -33,7 +33,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=5, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--num_pairs", type=int, default=100000, help="number of pairs")
 parser.add_argument("--image_size", type=int, default=32, help="img size")
@@ -43,7 +43,7 @@ parser.add_argument("--resume", type=bool, default=False, help="Resume training 
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 
-parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
+parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
@@ -51,12 +51,12 @@ parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads 
 
 parser.add_argument("--nc", type=int, default=1, help="Number of channels in the training images. For color images this is 3")
 parser.add_argument("--nz", type=int, default=64, help="Size of z latent vector (i.e. size of generator input)")
-parser.add_argument("--ndf", type=int, default=16, help="Size of feature maps in discriminator")
+parser.add_argument("--ndf", type=int, default=64, help="Size of feature maps in discriminator")
 
 
 parser.add_argument("--sample_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=False, help="interval betwen image samples")
-parser.add_argument("--epoch_save_model_freq", type=int, default=100, help="number of epops per model save")
+parser.add_argument("--epoch_save_model_freq", type=int, default=1, help="number of epochs per model save")
 
 parser.add_argument("--cuda", type=bool, default=True,
                     help="CUDA activation")
@@ -117,13 +117,6 @@ class SiameseDataset(torch.utils.data.Dataset):
         self.transform = transform
         self.invert_status = invert_status
         self.transfortoPIL = torchvision.transforms.ToPILImage()
-
-        # count = 0
-        # while count < self.num_pairs:
-        #     rand_idx = np.random.randint(self.dataSize, size=1)
-        #     sample0_tuple = (self.data[rand_idx],self.targets[rand_idx])
-        #     same_class_status = random.randint(0, 1)
-
 
 
     def __getitem__(self, index):
@@ -210,15 +203,26 @@ class Model(nn.Module):
             'bn': nn.BatchNorm2d(opt.ndf * 4),
             'activation': nn.LeakyReLU(0.2, inplace=True)
         })
-        self.conv4 = nn.ModuleDict({
-            'conv': nn.Conv2d(opt.ndf * 4, opt.ndf * 8, 4, 2, 1, bias=False),
-            'bn': nn.BatchNorm2d(opt.ndf * 8),
+        # self.conv4 = nn.ModuleDict({
+        #     'conv': nn.Conv2d(opt.ndf * 4, opt.ndf * 8, 4, 2, 1, bias=False),
+        #     'bn': nn.BatchNorm2d(opt.ndf * 8),
+        #     'activation': nn.LeakyReLU(0.2, inplace=True)
+        # })
+        #
+        # self.conv5 = nn.ModuleDict({
+        #     'conv': nn.Conv2d(opt.ndf * 8, opt.ndf * 16, 2, 1, 0, bias=False),
+        #     'bn': nn.BatchNorm2d(opt.ndf * 16),
+        # })
+
+        self.fc1 = nn.ModuleDict({
+            'dense': nn.Linear(opt.ndf * 4 * 4 * 4, 1024),
+            'bn': nn.BatchNorm1d(1024),
             'activation': nn.LeakyReLU(0.2, inplace=True)
         })
 
-        self.conv5 = nn.ModuleDict({
-            'conv': nn.Conv2d(opt.ndf * 8, opt.ndf * 16, 2, 1, 0, bias=False),
-            'bn': nn.BatchNorm2d(opt.ndf * 16),
+        self.fc2 = nn.ModuleDict({
+            'dense': nn.Linear(1024, 1024),
+            # 'bn': nn.BatchNorm1d(128),
         })
 
     def forward_pass(self, input):
@@ -236,17 +240,14 @@ class Model(nn.Module):
         out = self.conv3['bn'](out)
         out = self.conv3['activation'](out)
 
-        # Layer 4
-        out = self.conv4['conv'](out)
-        out = self.conv4['bn'](out)
-        out = self.conv4['activation'](out)
+        # Flatten operation to connect cnn to fc
+        out_flatten = out.view(out.size(0), -1)
 
-        # Layer 5
-        out = self.conv5['conv'](out)
-        out = self.conv5['bn'](out)
+        # Layer 4
+        out = self.fc1['dense'](out_flatten)
         out = torch.sigmoid(out)
 
-        return torch.squeeze(out)
+        return out
 
     def forward(self, input1, input2):
         output1 = self.forward_pass(input1)
@@ -261,13 +262,13 @@ class ContrastiveLoss(torch.nn.Module):
     Genuine and Impostor Pairs have "0" and "1" labels respectively.
     """
 
-    def __init__(self, margin=5.0):
+    def __init__(self, margin=2.0):
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
 
     def forward(self, output1, output2, label):
         try:
-            euclidean_distance = F.pairwise_distance(output1, output2, keepdim=False)
+            euclidean_distance = F.pairwise_distance(output1, output2, keepdim=True)
         except:
             print(output1.shape)
             print(output2.shape)

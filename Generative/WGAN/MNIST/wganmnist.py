@@ -42,7 +42,7 @@ parser.add_argument("--DATASETPATH", type=str,
 
 parser.add_argument("--n_epochs", type=int, default=20, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
-parser.add_argument("--lr", type=float, default=0.00005, help="adam: learning rate")
+parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
@@ -605,28 +605,39 @@ if opt.generate:
     plt.subplot(1, 2, 2)
     plt.axis("off")
     plt.title("Fake Images")
-    plt.imshow(np.transpose(grid.cpu().detach().numpy(), (1, 2, 0)))
+    numpygrid = grid.cpu().detach().numpy()
+    plt.imshow(np.transpose(numpygrid, (1, 2, 0)))
     plt.show()
 
-    # # Load real data
-    # real_samples = dataset.return_data()
-    # num_fake_samples = 10000
+    # Creare fake sample
+    num_fake_samples = 10000
     #
-    # # Generate a batch of samples
-    # gen_samples = np.zeros_like(real_samples, dtype=type(real_samples))
-    # n_batches = int(num_fake_samples / opt.batch_size)
-    # for i in range(n_batches):
-    #     # Sample noise as generator input
-    #     z = torch.randn(opt.batch_size, opt.nz, 1, 1, device=device)
-    #     fake_imgs = generatorModel(z)
-    #     gen_samples[i * opt.batch_size:(i + 1) * opt.batch_size, :] = fake_imgs.cpu().data.numpy()
-    #     # Check to see if there is any nan
-    #     assert (gen_samples[i, :] != gen_samples[i, :]).any() == False
-    #
-    # gen_samples = np.delete(gen_samples, np.s_[(i + 1) * opt.batch_size:], 0)
-    #
-    # # Trasnform Object array to float
-    # gen_samples = gen_samples.astype(np.float32)
+    # Generate a batch of samples
+    gen_samples = np.zeros((num_fake_samples, opt.image_size, opt.image_size, opt.nc), dtype=type(numpygrid))
+    n_batches = int(num_fake_samples / opt.batch_size)
+    for i in range(n_batches):
+        # Sample noise as generator input
+        z = torch.randn(opt.batch_size, opt.nz, 1, 1, device=device)
+        fake_imgs = generatorModel(z)
+
+        # Transform to numpy
+        fake_imgs = fake_imgs.cpu().data.numpy()
+
+        # Channel order is different in Numpy and PyTorch
+        # PyTorch : [NWHC]
+        # Numpy: [NCWH]
+        fake_imgs = np.transpose(fake_imgs, (0, 3, 2, 1))
+
+        gen_samples[i * opt.batch_size:(i + 1) * opt.batch_size, :] = fake_imgs
+        if (i+1) % 10 == 0:
+            print('processed {}-th batch'.format(i))
+        # Check to see if there is any nan
+        assert (gen_samples[i, :] != gen_samples[i, :]).any() == False
+
+    gen_samples = np.delete(gen_samples, np.s_[(i + 1) * opt.batch_size:], 0)
+    print('type(gen_samples)', type(gen_samples),gen_samples.shape)
+    np.save(os.path.join(opt.expPATH, "fakeimages.npy"), gen_samples, allow_pickle=True)
+
 
 
 if opt.evaluate:
