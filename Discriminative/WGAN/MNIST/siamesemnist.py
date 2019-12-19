@@ -34,7 +34,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-parser.add_argument("--batch_size", type=int, default=512, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--num_pairs", type=int, default=100000, help="number of pairs")
 parser.add_argument("--image_size", type=int, default=32, help="img size")
 
