@@ -102,7 +102,7 @@ datasetTrain = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=True, tran
 datasetTest = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=False, transform=transform, target_transform=None,
                                          download=True)
 
-print('Train data shape:', type(datasetTrain.data))
+print('Train data shape:', datasetTrain.data.shape)
 print('Train labels shape:', datasetTrain.targets.shape)
 
 print('Test data shape:', datasetTest.data.shape)
@@ -218,6 +218,7 @@ class Model(nn.Module):
 
         self.conv5 = nn.ModuleDict({
             'conv': nn.Conv2d(opt.ndf * 8, opt.ndf * 16, 2, 1, 0, bias=False),
+            'bn': nn.BatchNorm2d(opt.ndf * 16),
         })
 
     def forward_pass(self, input):
@@ -242,6 +243,8 @@ class Model(nn.Module):
 
         # Layer 5
         out = self.conv5['conv'](out)
+        out = self.conv5['bn'](out)
+        out = torch.sigmoid(out)
 
         return torch.squeeze(out)
 
@@ -258,7 +261,7 @@ class ContrastiveLoss(torch.nn.Module):
     Genuine and Impostor Pairs have "0" and "1" labels respectively.
     """
 
-    def __init__(self, margin=2.0):
+    def __init__(self, margin=5.0):
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
 
