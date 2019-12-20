@@ -8,6 +8,7 @@ import os
 from subprocess import call
 import matplotlib.pyplot as plt
 from sklearn import metrics
+import json
 
 import PIL.ImageOps
 
@@ -97,9 +98,9 @@ device = torch.device("cuda:0" if opt.cuda else "cpu")
 if opt.training:
 
     MNISTTrain = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=True, transform=None, target_transform=None,
-                                              download=True)
+                                            download=True)
     MNISTTest = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=False, transform=None, target_transform=None,
-                                             download=True)
+                                           download=True)
 
     print('Train data shape:', MNISTTrain.data.shape)
     print('Train labels shape:', MNISTTrain.targets.shape)
@@ -150,6 +151,7 @@ if opt.training:
 
         def __len__(self):
             return self.dataSize
+
 
     # The order of transfor matters
     # transforms.ToTensor() transform numpy to tensor
@@ -461,7 +463,6 @@ if opt.training:
 
 if opt.generate:
 
-
     ########## REAL DATA ##############
 
     # The order of transfor matters
@@ -483,8 +484,7 @@ if opt.generate:
 
     samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=MNISTTest, replacement=True)
     dataloaderReal = DataLoader(MNISTTest, batch_size=opt.batch_size,
-                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
-
+                                shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
     #####################################################################################################
     ####################################################################################################
@@ -498,7 +498,6 @@ if opt.generate:
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-
 
     class FakeDataset(torch.utils.data.Dataset):
         def __init__(self, dataset, invert_status=True, transform=None):
@@ -533,7 +532,7 @@ if opt.generate:
     dataset_fake_object = FakeDataset(fakeData, invert_status=True, transform=transformFake)
     samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_fake_object, replacement=True)
     dataloaderFake = DataLoader(dataset_fake_object, batch_size=opt.batch_size,
-                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
+                                shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
     ####################################################################################################
     ####################################################################################################
@@ -576,22 +575,30 @@ if opt.generate:
         label = Variable(label.type(Tensor))
 
         if (i + 1) % 100 == 0:
-            print('Processing {}-th real sample'.format(i+1))
+            print('Processing {}-th real sample'.format(i + 1))
 
         # Generate a batch of images
         out, _ = Model(realImg, realImg)
         numpy_out = out.cpu().data.numpy()
+        numpy_realImg = realImg.cpu().data.numpy()
         if not real_img_features_status:
             real_img_features = numpy_out
+            real_img_matrix = numpy_realImg
             real_img_labels = label.cpu().data.numpy()
             real_img_features_status = True
         else:
             real_img_features = np.append(real_img_features, numpy_out, axis=0)
+            real_img_matrix = np.append(real_img_matrix, numpy_realImg, axis=0)
             real_img_labels = np.append(real_img_labels, label.cpu().data.numpy(), axis=0)
 
     real_img_features = real_img_features.astype(np.float32)
-    np.save(os.path.join(opt.expPATH, "real_img_features.npy"), real_img_features, allow_pickle=False)
-    np.save(os.path.join(opt.expPATH, "real_img_labels.npy"), real_img_labels, allow_pickle=False)
+    # Channel order is different in Matplotlib and PyTorch
+    # PyTorch : [NCWH]
+    # Numpy: [NWHC]
+    real_img_matrix = np.transpose(real_img_matrix.astype(np.float32), (0, 2, 3, 1))
+
+    # back into the range of [0,1]
+    real_img_matrix = real_img_matrix * 0.5 + 0.5
 
     # process fake images
     print('processing fake data...')
@@ -599,26 +606,57 @@ if opt.generate:
     for j, fakedata in enumerate(dataloaderFake):
 
         fakeImg = Variable(fakedata.type(Tensor))
-        if (j+1) % 100 == 0:
-            print('Processing {}-th fake sample'.format(j+1))
+        if (j + 1) % 100 == 0:
+            print('Processing {}-th fake sample'.format(j + 1))
         out, _ = Model(fakeImg, fakeImg)
         numpy_out = out.cpu().data.numpy()
+        numpy_fakeImg = fakeImg.cpu().data.numpy()
         if not fake_img_features_status:
             fake_img_features = numpy_out
+            fake_img_matrix = numpy_fakeImg
             fake_img_features_status = True
         else:
             fake_img_features = np.append(fake_img_features, numpy_out, axis=0)
+            fake_img_matrix = np.append(fake_img_matrix, numpy_fakeImg, axis=0)
+
     fake_img_features = fake_img_features.astype(np.float32)
+
+    # back into the range of [0,1]
+    fake_img_matrix = fake_img_matrix * 0.5 + 0.5
+
+    # Channel order is different in Matplotlib and PyTorch
+    # PyTorch : [NCWH]
+    # Numpy: [NWHC]
+    fake_img_matrix = np.transpose(fake_img_matrix.astype(np.float32), (0, 2, 3, 1))
+
+    np.save(os.path.join(opt.expPATH, "real_img_features.npy"), real_img_features, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "real_img_matrix.npy"), real_img_matrix, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "real_img_labels.npy"), real_img_labels, allow_pickle=False)
     np.save(os.path.join(opt.expPATH, "fake_img_features.npy"), fake_img_features, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "fake_img_matrix.npy"), fake_img_matrix, allow_pickle=False)
+
+    # dict = {'realimg': real_img_matrix.tolist(), 'realfeature': real_img_features.tolist(),
+    #         'label': real_img_labels.tolist(), 'fakeimg': fake_img_matrix.tolist(),
+    #         'fakefeature': fake_img_features.tolist()}
+    # jsoncontent = json.dumps(dict)
+    # f = open(os.path.join(opt.expPATH, "datadiscriminative.json"), "w")
+    # f.write(jsoncontent)
+    # f.close()
 
 if opt.evaluate:
-
+    print('reading fiels...')
     # load features and labels for real images and also features for fake images
     real_img_features = np.load(os.path.join(opt.expPATH, "real_img_features.npy"), allow_pickle=False)
+    real_img_matrix = np.load(os.path.join(opt.expPATH, "real_img_matrix.npy"), allow_pickle=False)
     real_img_labels = np.load(os.path.join(opt.expPATH, "real_img_labels.npy"), allow_pickle=False)
     fake_img_features = np.load(os.path.join(opt.expPATH, "fake_img_features.npy"), allow_pickle=False)
-    print(real_img_features.shape, real_img_labels.shape, fake_img_features.shape)
+    fake_img_matrix = np.load(os.path.join(opt.expPATH, "fake_img_matrix.npy"), allow_pickle=False)
+    print(real_img_features.shape, real_img_matrix.shape, real_img_labels.shape, fake_img_features.shape, fake_img_matrix.shape)
 
+    # obj = open(os.path.join(opt.expPATH, "datadiscriminative.json"), 'r', encoding='utf-8').read()
+    # jsonarr = json.loads(obj)
+    # print(jsonarr)
+    # a_new = np.array(jsonarr)
 
     sys.exit()
 
