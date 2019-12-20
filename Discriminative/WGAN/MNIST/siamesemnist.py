@@ -38,8 +38,10 @@ parser.add_argument("--batch_size", type=int, default=64, help="size of the batc
 parser.add_argument("--num_pairs", type=int, default=100000, help="number of pairs")
 parser.add_argument("--image_size", type=int, default=32, help="img size")
 
-parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Resume training or not")
+parser.add_argument("--generate", type=bool, default=False, help="Generating features")
+parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 
@@ -49,14 +51,15 @@ parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first 
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
 
-parser.add_argument("--nc", type=int, default=1, help="Number of channels in the training images. For color images this is 3")
+parser.add_argument("--nc", type=int, default=1,
+                    help="Number of channels in the training images. For color images this is 3")
 parser.add_argument("--nz", type=int, default=64, help="Size of z latent vector (i.e. size of generator input)")
 parser.add_argument("--ndf", type=int, default=64, help="Size of feature maps in discriminator")
-
 
 parser.add_argument("--sample_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=False, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=1, help="number of epochs per model save")
+parser.add_argument("--display_sample", type=bool, default=False, help="Display sample images")
 
 parser.add_argument("--cuda", type=bool, default=True,
                     help="CUDA activation")
@@ -90,96 +93,98 @@ device = torch.device("cuda:0" if opt.cuda else "cpu")
 ### Dataset Processing ###
 ##########################
 
-transform = transforms.Compose([
-    transforms.Resize(opt.image_size),
-    transforms.CenterCrop(opt.image_size),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,)),
-])
 
-datasetTrain = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=True, transform=transform, target_transform=None,
-                                          download=True)
-datasetTest = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=False, transform=transform, target_transform=None,
-                                         download=True)
+if opt.training:
 
-print('Train data shape:', datasetTrain.data.shape)
-print('Train labels shape:', datasetTrain.targets.shape)
+    MNISTTrain = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=True, transform=None, target_transform=None,
+                                              download=True)
+    MNISTTest = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=False, transform=None, target_transform=None,
+                                             download=True)
 
-print('Test data shape:', datasetTest.data.shape)
-print('Test labels shape:', datasetTest.targets.shape)
+    print('Train data shape:', MNISTTrain.data.shape)
+    print('Train labels shape:', MNISTTrain.targets.shape)
+
+    print('Test data shape:', MNISTTest.data.shape)
+    print('Test labels shape:', MNISTTest.targets.shape)
 
 
-class SiameseDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset, invert_status=True, transform=None):
-        self.data = dataset.data
-        self.targets = dataset.targets
-        self.dataSize = self.data.shape[0]
-        self.transform = transform
-        self.invert_status = invert_status
-        self.transfortoPIL = torchvision.transforms.ToPILImage()
+    class SiameseDataset(torch.utils.data.Dataset):
+        def __init__(self, dataset, invert_status=True, transform=None):
+            self.data = dataset.data
+            self.targets = dataset.targets
+            self.dataSize = self.data.shape[0]
+            self.transform = transform
+            self.invert_status = invert_status
+            self.transfortoPIL = torchvision.transforms.ToPILImage()
 
+        def __getitem__(self, index):
 
-    def __getitem__(self, index):
+            rand_idx = np.random.randint(self.dataSize, size=1)
+            # self.data.shape = (N,W,H), self.data[rand_idx].shape = (1,W,H)
+            img0_tuple = (self.data[rand_idx], self.targets[rand_idx])
+            same_class_status = random.randint(0, 1)
+            if same_class_status:
+                while True:
+                    rand_idx = np.random.randint(self.dataSize, size=1)
+                    # keep looping till the same class image is found
+                    img1_tuple = (self.data[rand_idx], self.targets[rand_idx])
+                    if img0_tuple[1] == img1_tuple[1]:
+                        break
+            else:
+                while True:
+                    rand_idx = np.random.randint(self.dataSize, size=1)
+                    # keep looping till a different class image is found
+                    img1_tuple = (self.data[rand_idx], self.targets[rand_idx])
+                    if img0_tuple[1] != img1_tuple[1]:
+                        break
 
-        rand_idx = np.random.randint(self.dataSize, size=1)
-        img0_tuple = (self.data[rand_idx], self.targets[rand_idx])
-        same_class_status = random.randint(0, 1)
-        if same_class_status:
-            while True:
-                rand_idx = np.random.randint(self.dataSize, size=1)
-                # keep looping till the same class image is found
-                img1_tuple = (self.data[rand_idx], self.targets[rand_idx])
-                if img0_tuple[1] == img1_tuple[1]:
-                    break
-        else:
-            while True:
-                rand_idx = np.random.randint(self.dataSize, size=1)
-                # keep looping till a different class image is found
-                img1_tuple = (self.data[rand_idx], self.targets[rand_idx])
-                if img0_tuple[1] != img1_tuple[1]:
-                    break
+            # samples (of type tensors)
+            img0 = img0_tuple[0]
+            img1 = img1_tuple[0]
 
-        # samples
-        img0 = img0_tuple[0]
-        img1 = img1_tuple[0]
+            if self.transform is not None:
+                img0 = self.transform(img0)
+                img1 = self.transform(img1)
 
+            return img0, img1, torch.from_numpy(np.array([int(img0_tuple[1] != img1_tuple[1])], dtype=np.float32))
 
-        # As transform needs images, we first transform tensor to img
-        if self.invert_status:
-            img0 = self.transfortoPIL(img0)
-            img1 = self.transfortoPIL(img1)
+        def __len__(self):
+            return self.dataSize
 
-        if self.transform is not None:
-            img0 = self.transform(img0)
-            img1 = self.transform(img1)
+    # The order of transfor matters
+    # transforms.ToTensor() transform numpy to tensor
+    # transforms.ToPILImage() transform tensor to PIL
+    transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize(opt.image_size),
+        transforms.CenterCrop(opt.image_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ])
 
-        return img0, img1, torch.from_numpy(np.array([int(img0_tuple[1] != img1_tuple[1])], dtype=np.float32))
+    # Train data loader
+    dataset_train_object = SiameseDataset(MNISTTrain, invert_status=True, transform=transform)
+    samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_train_object, replacement=True)
+    dataloaderTrain = DataLoader(dataset_train_object, batch_size=opt.batch_size,
+                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
-    def __len__(self):
-        return self.dataSize
+    # Test data loader
+    dataset_test_object = SiameseDataset(MNISTTest, invert_status=True, transform=transform)
+    samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_test_object, replacement=True)
+    dataloaderTest = DataLoader(dataset_test_object, batch_size=opt.batch_size,
+                                shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
-# Train data loader
-dataset_train_object = SiameseDataset(datasetTrain, invert_status=True, transform=transform)
-samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_train_object, replacement=True)
-dataloaderTrain = DataLoader(dataset_train_object, batch_size=opt.batch_size,
-                              shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
+    if opt.display_sample:
+        # Show some training pairs
+        real_batch = next(iter(dataloaderTrain))
+        concatenated = torch.cat((real_batch[0].to(device)[:8], real_batch[1].to(device)[:8]), 0)
 
-# Test data loader
-dataset_test_object = SiameseDataset(datasetTest, invert_status=True, transform=transform)
-samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_test_object, replacement=True)
-dataloaderTest = DataLoader(dataset_test_object, batch_size=opt.batch_size,
-                              shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
+        plt.figure(figsize=(2, 8))
+        plt.axis("off")
+        plt.title("Training Pairs")
+        plt.imshow(np.transpose(torchvision.utils.make_grid(concatenated).cpu(), (1, 2, 0)))
+        plt.show()
 
-
-# Show some training pairs
-real_batch = next(iter(dataloaderTrain))
-concatenated = torch.cat((real_batch[0].to(device)[:8],real_batch[1].to(device)[:8]),0)
-
-plt.figure(figsize=(2,8))
-plt.axis("off")
-plt.title("Training Pairs")
-plt.imshow(np.transpose(torchvision.utils.make_grid(concatenated).cpu(),(1,2,0)))
-plt.show()
 
 ####################
 ### Architecture ###
@@ -313,13 +318,10 @@ Tensor = torch.FloatTensor
 one = torch.FloatTensor([1])
 mone = one * -1
 
-
 if torch.cuda.device_count() > 1 and opt.multiplegpu:
-
-  gpu_idx = list(range(opt.num_gpu))
-  Model = nn.DataParallel(Model, device_ids=[gpu_idx[-1]])
-  criterion = nn.DataParallel(criterion, device_ids=[gpu_idx[-1]])
-
+    gpu_idx = list(range(opt.num_gpu))
+    Model = nn.DataParallel(Model, device_ids=[gpu_idx[-1]])
+    criterion = nn.DataParallel(criterion, device_ids=[gpu_idx[-1]])
 
 if torch.cuda.is_available():
     """
@@ -334,7 +336,6 @@ if torch.cuda.is_available():
 
 # Weight initialization
 Model.apply(weights_init)
-
 
 ######
 
@@ -458,8 +459,169 @@ if opt.training:
     np.save(os.path.join(opt.expPATH, "fpr_" + str(opt.manualSeed) + ".npy"), fpr, allow_pickle=False)
     np.save(os.path.join(opt.expPATH, "tpr_" + str(opt.manualSeed) + ".npy"), tpr, allow_pickle=False)
 
+if opt.generate:
 
-else:
+
+    ########## REAL DATA ##############
+
+    # The order of transfor matters
+    # transforms.ToTensor() transform numpy to tensor
+    # transforms.ToPILImage() transform tensor to PIL
+    transform = transforms.Compose([
+        transforms.Resize(opt.image_size),
+        transforms.CenterCrop(opt.image_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ])
+
+    MNISTTest = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=False, transform=transform,
+                                           target_transform=None,
+                                           download=True)
+
+    print('Test data shape:', MNISTTest.data.shape)
+    print('Test labels shape:', MNISTTest.targets.shape)
+
+    samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=MNISTTest, replacement=True)
+    dataloaderReal = DataLoader(MNISTTest, batch_size=opt.batch_size,
+                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
+
+
+    #####################################################################################################
+    ####################################################################################################
+
+    ########## FAKE DATA ##############
+    # Generate features based on the discriminative model
+    transformFake = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize(opt.image_size),
+        transforms.CenterCrop(opt.image_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+
+    class FakeDataset(torch.utils.data.Dataset):
+        def __init__(self, dataset, invert_status=True, transform=None):
+            self.data = dataset
+            self.dataSize = self.data.shape[0]
+            self.transform = transform
+            self.invert_status = invert_status
+            self.transfortoPIL = torchvision.transforms.ToPILImage()
+
+        def __getitem__(self, idx):
+            if torch.is_tensor(idx):
+                idx = idx.tolist()
+
+            # Get image by index
+            img = self.data[idx]
+
+            if self.transform is not None:
+                img = self.transform(img)
+
+            return img
+
+        def __len__(self):
+            return self.dataSize
+
+
+    # load fake data
+    fakeData = np.load(
+        os.path.join(os.path.expanduser('~/experiments/pytorch/model/' + 'wganmnist'), "fakeimages.npy"),
+        allow_pickle=False)
+
+    # Train data loader
+    dataset_fake_object = FakeDataset(fakeData, invert_status=True, transform=transformFake)
+    samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_fake_object, replacement=True)
+    dataloaderFake = DataLoader(dataset_fake_object, batch_size=opt.batch_size,
+                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
+
+    ####################################################################################################
+    ####################################################################################################
+
+    # Loading the checkpoint
+    checkpoint = torch.load(os.path.join(opt.expPATH, "model_siamese_epoch_3.pth"))
+
+    # Load models
+    Model.load_state_dict(checkpoint['model_state_dict'])
+
+    # insert weights [required]
+    Model.eval()
+
+    if opt.display_sample:
+        #### plot some fake images ###
+        # Select some fake image
+        N = 3
+        sel_fake_imgs = fakeData[0:N * N, :, :, :]
+
+        # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
+        # Do repeat to copy along the thrid axis for having an RGB.
+        sel_fake_imgs = np.repeat(sel_fake_imgs, 3, axis=3)
+        f, axarr = plt.subplots(N, N)
+        for i in range(N):
+            for j in range(N):
+                axarr[i, j].imshow(sel_fake_imgs[i + j])
+        plt.show()
+
+    # Process the real data
+    print('processing real data...')
+    real_img_features_status = False
+    for i, data in enumerate(dataloaderReal):
+
+        # load data
+        realImg = data[0]
+        label = data[1]
+
+        # Configure input
+        realImg = Variable(realImg.type(Tensor))
+        label = Variable(label.type(Tensor))
+
+        if (i + 1) % 100 == 0:
+            print('Processing {}-th real sample'.format(i+1))
+
+        # Generate a batch of images
+        out, _ = Model(realImg, realImg)
+        numpy_out = out.cpu().data.numpy()
+        if not real_img_features_status:
+            real_img_features = numpy_out
+            real_img_labels = label.cpu().data.numpy()
+            real_img_features_status = True
+        else:
+            real_img_features = np.append(real_img_features, numpy_out, axis=0)
+            real_img_labels = np.append(real_img_labels, label.cpu().data.numpy(), axis=0)
+
+    real_img_features = real_img_features.astype(np.float32)
+    np.save(os.path.join(opt.expPATH, "real_img_features.npy"), real_img_features, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "real_img_labels.npy"), real_img_labels, allow_pickle=False)
+
+    # process fake images
+    print('processing fake data...')
+    fake_img_features_status = False
+    for j, fakedata in enumerate(dataloaderFake):
+
+        fakeImg = Variable(fakedata.type(Tensor))
+        if (j+1) % 100 == 0:
+            print('Processing {}-th fake sample'.format(j+1))
+        out, _ = Model(fakeImg, fakeImg)
+        numpy_out = out.cpu().data.numpy()
+        if not fake_img_features_status:
+            fake_img_features = numpy_out
+            fake_img_features_status = True
+        else:
+            fake_img_features = np.append(fake_img_features, numpy_out, axis=0)
+    fake_img_features = fake_img_features.astype(np.float32)
+    np.save(os.path.join(opt.expPATH, "fake_img_features.npy"), fake_img_features, allow_pickle=False)
+
+if opt.evaluate:
+
+    # load features and labels for real images and also features for fake images
+    real_img_features = np.load(os.path.join(opt.expPATH, "real_img_features.npy"), allow_pickle=False)
+    real_img_labels = np.load(os.path.join(opt.expPATH, "real_img_labels.npy"), allow_pickle=False)
+    fake_img_features = np.load(os.path.join(opt.expPATH, "fake_img_features.npy"), allow_pickle=False)
+    print(real_img_features.shape, real_img_labels.shape, fake_img_features.shape)
+
+
+    sys.exit()
+
     # Load frps and tprs
     # The frp and tpr for different runs of experiments were previously saved.
     fpr_list = []

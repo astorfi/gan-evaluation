@@ -245,6 +245,14 @@ class Discriminator(nn.Module):
 ### Functions ###
 #################
 
+def normalizeIm(img):
+    """
+    Normalize an image into the range of [0,1]
+    """
+    minIm = float(img.min())
+    maxIm = float(img.max())
+    np.divide(np.add(img,-minIm), maxIm - minIm + 1e-6)
+
 def discriminator_accuracy(predicted, y_true):
     """
     The discriminator accuracy on samples
@@ -623,10 +631,13 @@ if opt.generate:
         # Transform to numpy
         fake_imgs = fake_imgs.cpu().data.numpy()
 
-        # Channel order is different in Numpy and PyTorch
-        # PyTorch : [NWHC]
-        # Numpy: [NCWH]
-        fake_imgs = np.transpose(fake_imgs, (0, 3, 2, 1))
+        # back into the range of [0,1]
+        fake_imgs = fake_imgs * 0.5 + 0.5
+
+        # Channel order is different in Matplotlib and PyTorch
+        # PyTorch : [NCWH]
+        # Numpy: [NWHC]
+        fake_imgs = np.transpose(fake_imgs, (0, 2, 3, 1))
 
         gen_samples[i * opt.batch_size:(i + 1) * opt.batch_size, :] = fake_imgs
         if (i+1) % 10 == 0:
@@ -636,8 +647,9 @@ if opt.generate:
 
     gen_samples = np.delete(gen_samples, np.s_[(i + 1) * opt.batch_size:], 0)
     print('type(gen_samples)', type(gen_samples),gen_samples.shape)
-    np.save(os.path.join(opt.expPATH, "fakeimages.npy"), gen_samples, allow_pickle=True)
-
+    gen_samples = gen_samples.astype(np.float32)
+    np.save(os.path.join(opt.expPATH, "fakeimages.npy"), gen_samples, allow_pickle=False)
+    print('type(gen_samples)', type(gen_samples), gen_samples.shape)
 
 
 if opt.evaluate:
