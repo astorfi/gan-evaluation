@@ -60,7 +60,7 @@ parser.add_argument("--ndf", type=int, default=64, help="Size of feature maps in
 parser.add_argument("--sample_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=False, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=1, help="number of epochs per model save")
-parser.add_argument("--display_sample", type=bool, default=False, help="Display sample images")
+parser.add_argument("--display_sample", type=bool, default=True, help="Display sample images")
 
 parser.add_argument("--cuda", type=bool, default=True,
                     help="CUDA activation")
@@ -546,21 +546,6 @@ if opt.generate:
     # insert weights [required]
     Model.eval()
 
-    if opt.display_sample:
-        #### plot some fake images ###
-        # Select some fake image
-        N = 3
-        sel_fake_imgs = fakeData[0:N * N, :, :, :]
-
-        # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
-        # Do repeat to copy along the thrid axis for having an RGB.
-        sel_fake_imgs = np.repeat(sel_fake_imgs, 3, axis=3)
-        f, axarr = plt.subplots(N, N)
-        for i in range(N):
-            for j in range(N):
-                axarr[i, j].imshow(sel_fake_imgs[i + j])
-        plt.show()
-
     # Process the real data
     print('processing real data...')
     real_img_features_status = False
@@ -600,6 +585,22 @@ if opt.generate:
     # back into the range of [0,1]
     real_img_matrix = real_img_matrix * 0.5 + 0.5
 
+    # for numpy saving
+    real_img_matrix = real_img_matrix.astype(np.float32)
+
+    if opt.display_sample:
+        N = 3
+        sel_real_imgs = real_img_matrix[0:N * N, :, :, :]
+
+        # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
+        # Do repeat to copy along the thrid axis for having an RGB.
+        sel_real_imgs = np.repeat(sel_real_imgs, 3, axis=3)
+        f, axarr = plt.subplots(N, N)
+        for i in range(N):
+            for j in range(N):
+                axarr[i, j].imshow(sel_real_imgs[i + j])
+        plt.show()
+
     # process fake images
     print('processing fake data...')
     fake_img_features_status = False
@@ -627,7 +628,21 @@ if opt.generate:
     # Channel order is different in Matplotlib and PyTorch
     # PyTorch : [NCWH]
     # Numpy: [NWHC]
-    fake_img_matrix = np.transpose(fake_img_matrix.astype(np.float32), (0, 2, 3, 1))
+    fake_img_matrix = np.transpose(fake_img_matrix, (0, 2, 3, 1))
+    fake_img_matrix = fake_img_matrix.astype(np.float32)
+
+    if opt.display_sample:
+        N = 3
+        sel_fake_imgs = fake_img_matrix[0:N * N, :, :, :]
+
+        # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
+        # Do repeat to copy along the thrid axis for having an RGB.
+        sel_fake_imgs = np.repeat(sel_fake_imgs, 3, axis=3)
+        f, axarr = plt.subplots(N, N)
+        for i in range(N):
+            for j in range(N):
+                axarr[i, j].imshow(sel_fake_imgs[i + j])
+        plt.show()
 
     np.save(os.path.join(opt.expPATH, "real_img_features.npy"), real_img_features, allow_pickle=False)
     np.save(os.path.join(opt.expPATH, "real_img_matrix.npy"), real_img_matrix, allow_pickle=False)
@@ -644,7 +659,7 @@ if opt.generate:
     # f.close()
 
 if opt.evaluate:
-    print('reading fiels...')
+    print('reading files...')
     # load features and labels for real images and also features for fake images
     real_img_features = np.load(os.path.join(opt.expPATH, "real_img_features.npy"), allow_pickle=False)
     real_img_matrix = np.load(os.path.join(opt.expPATH, "real_img_matrix.npy"), allow_pickle=False)
@@ -653,10 +668,23 @@ if opt.evaluate:
     fake_img_matrix = np.load(os.path.join(opt.expPATH, "fake_img_matrix.npy"), allow_pickle=False)
     print(real_img_features.shape, real_img_matrix.shape, real_img_labels.shape, fake_img_features.shape, fake_img_matrix.shape)
 
-    # obj = open(os.path.join(opt.expPATH, "datadiscriminative.json"), 'r', encoding='utf-8').read()
-    # jsonarr = json.loads(obj)
-    # print(jsonarr)
-    # a_new = np.array(jsonarr)
+    # random sample
+    rand_idx = int(np.random.randint(fake_img_features.shape[0], size=1))
+    sample_fake_feature = fake_img_features[rand_idx]
+    sample_fake = fake_img_matrix[rand_idx]
+
+    # display fake
+    N = 3
+    sel_fake_imgs = fake_img_matrix[0:N * N, :, :, :]
+
+    # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
+    # Do repeat to copy along the thrid axis for having an RGB.
+    sel_fake_imgs = np.repeat(sel_fake_imgs, 3, axis=3)
+    f, axarr = plt.subplots(N, N)
+    for i in range(N):
+        for j in range(N):
+            axarr[i, j].imshow(sel_fake_imgs[i + j])
+    plt.show()
 
     sys.exit()
 
