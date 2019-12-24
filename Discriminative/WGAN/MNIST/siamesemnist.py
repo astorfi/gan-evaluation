@@ -499,6 +499,7 @@ if opt.generate:
         transforms.Normalize((0.5,), (0.5,))
     ])
 
+
     class FakeDataset(torch.utils.data.Dataset):
         def __init__(self, dataset, invert_status=True, transform=None):
             self.data = dataset
@@ -650,15 +651,79 @@ if opt.generate:
     np.save(os.path.join(opt.expPATH, "fake_img_features.npy"), fake_img_features, allow_pickle=False)
     np.save(os.path.join(opt.expPATH, "fake_img_matrix.npy"), fake_img_matrix, allow_pickle=False)
 
-    # dict = {'realimg': real_img_matrix.tolist(), 'realfeature': real_img_features.tolist(),
-    #         'label': real_img_labels.tolist(), 'fakeimg': fake_img_matrix.tolist(),
-    #         'fakefeature': fake_img_features.tolist()}
-    # jsoncontent = json.dumps(dict)
-    # f = open(os.path.join(opt.expPATH, "datadiscriminative.json"), "w")
-    # f.write(jsoncontent)
-    # f.close()
+    ####### Generate and save distances ####
+    # Status
+    one_random_fake = False
+    all_fake = True
+
+    if one_random_fake:
+        # random sample
+        rand_idx = int(np.random.randint(fake_img_features.shape[0], size=1))
+        sample_fake_feature = fake_img_features[rand_idx]
+        sample_fake = fake_img_matrix[rand_idx]
+
+        # Compare to all real ones
+        min = False
+        index_min = False
+        for i in range(real_img_features.shape[0]):
+            euclidean_distance = np.linalg.norm(sample_fake_feature - real_img_features[i], ord=2)
+            if (i + 1) % 100 == 0:
+                print('Processed {}-th image'.format(i))
+                print('The euclidean distance is {}:'.format(euclidean_distance))
+            if not min:
+                min = euclidean_distance
+                index_min = i
+            else:
+                if euclidean_distance < min:
+                    min = euclidean_distance
+                    index_min = i
+
+        print('index:', index_min)
+        print('min:', min)
+
+        # print the match
+        imgPair = np.concatenate((sample_fake, real_img_matrix[index_min]), axis=1)
+        imgPair = np.repeat(imgPair, 3, axis=2)
+        plt.imshow(imgPair)
+        plt.show()
+
+    if all_fake:
+
+        dist = np.zeros((fake_img_features.shape[0], real_img_features.shape[0]), dtype=np.float32)
+        dist_min = np.zeros((fake_img_features.shape[0], ), dtype=np.float32)
+        label_fake = np.zeros((fake_img_features.shape[0], ), dtype=np.int32)
+        index_min = np.zeros((fake_img_features.shape[0], ), dtype=np.int32)
+        for j in range(fake_img_features.shape[0]):
+            if (j + 1) % 100 == 0:
+                print('Processed {}-th fake image'.format(j))
+            # Compare to all real ones
+            min = False
+            index_min = False
+            for i in range(real_img_features.shape[0]):
+                euclidean_distance = np.linalg.norm(fake_img_features[j] - real_img_features[i], ord=2)
+                dist[j, i] = euclidean_distance
+                if not min:
+                    min = euclidean_distance
+                    index_min = i
+                else:
+                    if euclidean_distance < min:
+                        min = euclidean_distance
+                        index_min = i
+
+            # The index of the matrched real img
+            idx_min[j] = index_min
+
+            # The minimum distance of fake image to its real counterpart
+            dist_min[j] = min
+
+            # The label that the fakes are classfied with
+            label_fake[j] = real_img_labels[int(index_min)]
+
+        np.save(os.path.join(opt.expPATH, "evalDist.npy"), dist, allow_pickle=False)
+
 
 if opt.evaluate:
+
     print('reading files...')
     # load features and labels for real images and also features for fake images
     real_img_features = np.load(os.path.join(opt.expPATH, "real_img_features.npy"), allow_pickle=False)
@@ -666,25 +731,125 @@ if opt.evaluate:
     real_img_labels = np.load(os.path.join(opt.expPATH, "real_img_labels.npy"), allow_pickle=False)
     fake_img_features = np.load(os.path.join(opt.expPATH, "fake_img_features.npy"), allow_pickle=False)
     fake_img_matrix = np.load(os.path.join(opt.expPATH, "fake_img_matrix.npy"), allow_pickle=False)
-    print(real_img_features.shape, real_img_matrix.shape, real_img_labels.shape, fake_img_features.shape, fake_img_matrix.shape)
+    evalDist = np.load(os.path.join(opt.expPATH, "evalDist.npy"), allow_pickle=False)
+    print(evalDist.shape, real_img_features.shape, real_img_matrix.shape, real_img_labels.shape,
+          fake_img_features.shape, fake_img_matrix.shape)
 
+    # # UNCOMMENT TO SEE SOME FAKE SAMPLES
+
+    ########################################
+    ########### Display fake ###############
+    ########################################
+    # if opt.display_sample:
+    #     # display fake
+    #     N = 3
+    #     idx_fake_rand = np.random.choice(fake_img_matrix.shape[0], N * N)
+    #     sel_fake_imgs = fake_img_matrix[idx_fake_rand, :, :, :]
+    #
+    #     # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
+    #     # Do repeat to copy along the thrid axis for having an RGB.
+    #     sel_fake_imgs = np.repeat(sel_fake_imgs, 3, axis=3)
+    #     f, axarr = plt.subplots(N, N)
+    #     for i in range(N):
+    #         for j in range(N):
+    #             axarr[i, j].imshow(sel_fake_imgs[i + j])
+    #     plt.show()
+
+    ########################################
+    ########### Evaluate  ##################
+    ########################################
+
+    print('calculating minimum distances...')
+    # Get the index associated with minimum distance
+    idx_sel = np.argmin(evalDist, axis=1)
+    dist_sel = evalDist[np.arange(evalDist.shape[0]),idx_sel]
+
+    # Take the detected label
+    real_img_labels_matrix = real_img_labels.reshape((1, real_img_labels.shape[0]))
+    real_img_labels_matrix = np.repeat(real_img_labels_matrix, fake_img_features.shape[0], axis=0)
+    label_fake = real_img_labels_matrix[np.arange(real_img_labels_matrix.shape[0]),idx_sel].astype(int)
+    print('calculating minimum distances is finished!')
+
+    ##########################################
+    ######## Display one random match ########
+    ##########################################
     # random sample
     rand_idx = int(np.random.randint(fake_img_features.shape[0], size=1))
     sample_fake_feature = fake_img_features[rand_idx]
     sample_fake = fake_img_matrix[rand_idx]
 
-    # display fake
-    N = 3
-    sel_fake_imgs = fake_img_matrix[0:N * N, :, :, :]
-
-    # matplotlib.pyplot.imshow() needs a 2D array, or a 3D array with the third dimension being of shape 3 or 4!
-    # Do repeat to copy along the thrid axis for having an RGB.
-    sel_fake_imgs = np.repeat(sel_fake_imgs, 3, axis=3)
-    f, axarr = plt.subplots(N, N)
-    for i in range(N):
-        for j in range(N):
-            axarr[i, j].imshow(sel_fake_imgs[i + j])
+    # print the match
+    label_detect = label_fake[rand_idx]
+    dist_sel_temp = dist_sel[rand_idx]
+    print('label_detect', label_detect)
+    print('dist_sel', dist_sel_temp)
+    imgPair = np.concatenate((sample_fake, real_img_matrix[idx_sel[rand_idx]]), axis=1)
+    imgPair = np.repeat(imgPair, 3, axis=2)
+    plt.imshow(imgPair)
     plt.show()
+
+    ###############################
+    ######## Check quality ########
+    ###############################
+
+    # Here we sort distances and see if the score makes sense.
+    # For lower quality matches we should get a higher distance
+
+    # Return the indexes that sort the array
+    distance_sorted_idx = np.argsort(dist_sel, axis=None)
+    min = dist_sel[distance_sorted_idx[0]]
+    max = dist_sel[distance_sorted_idx[-1]]
+    print(min, max)
+
+    # Plot some samples
+    N = 9
+    # Skip the first 10 images for reducing bias (10 should be zero if starting from the lowest distance)
+    index_range = np.arange(10,distance_sorted_idx.shape[0], int(distance_sorted_idx.shape[0] / float(N)))
+    index_fake_sample = distance_sorted_idx[index_range]
+    index_real_sample = idx_sel[distance_sorted_idx[index_range]]
+    fake_img_list = []
+    for i in range(index_fake_sample.shape[0]):
+        fake_img = fake_img_matrix[index_fake_sample[i]]
+        fake_img = np.repeat(fake_img, 3, axis=2)
+        fake_img_list.append(fake_img)
+
+    real_img_list = []
+    for i in range(index_real_sample.shape[0]):
+        real_img = real_img_matrix[index_real_sample[i]]
+        real_img = np.repeat(real_img, 3, axis=2)
+        real_img_list.append(real_img)
+
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.axes_grid1 import ImageGrid
+
+    fig = plt.figure(figsize=(4., 4.))
+    grid = ImageGrid(fig, 111,  # similar to subplot(111)
+                     nrows_ncols=(3, 3),  # creates 2x2 grid of axes
+                     axes_pad=0.5,  # pad between axes in inch.
+                     )
+    count = 0
+    for ax, im in zip(grid, fake_img_list):
+        # Iterating over the grid returns the Axes.
+        ax.imshow(im)
+        ax.set_title('D: {:.2f}, L: {}'.format(dist_sel[index_fake_sample[count]],label_fake[index_fake_sample[count]]))
+        count+= 1
+
+    plt.show()
+
+    fig = plt.figure(figsize=(4., 4.))
+    grid = ImageGrid(fig, 111,  # similar to subplot(111)
+                     nrows_ncols=(3, 3),  # creates 2x2 grid of axes
+                     axes_pad=0.5,  # pad between axes in inch.
+                     )
+    count = 0
+    for ax, im in zip(grid, real_img_list):
+        # Iterating over the grid returns the Axes.
+        ax.imshow(im)
+        count += 1
+
+    plt.show()
+
+
 
     sys.exit()
 
