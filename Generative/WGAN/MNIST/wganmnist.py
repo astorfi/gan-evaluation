@@ -1,44 +1,48 @@
 import argparse
-import os
-import numpy as np
 import math
-import time
-import random
-
-import matplotlib.pyplot as plt
-
-import os
-from subprocess import call
-
-import torchvision
-import torchvision.transforms as transforms
-from torchvision.utils import save_image
-from torchvision.utils import make_grid
-import torchvision.utils as vutils
-import torchvision.datasets as dset
-
-# import matplotlib
-# matplotlib.use('GTK3Agg')
-import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-
-from torch.utils.data import DataLoader
-from torchvision import datasets
-from torch.autograd import Variable
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import os
+import random
+import time
+import torch
 import torch.backends.cudnn as cudnn
-
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
+import torchvision
+import torchvision.datasets as dset
+import torchvision.transforms as transforms
+import torchvision.utils as vutils
+from subprocess import call
+from torch.autograd import Variable
+from torch.utils.data import DataLoader
+from torchvision import datasets
+from torchvision.utils import make_grid
+from torchvision.utils import save_image
 
+"""
+The code parameters
+
+Notes
+-----
+Here, we define necessary parameters that we use in the code and store them in arg parser.
+"""
+
+# Parser for the parameters
 parser = argparse.ArgumentParser()
 
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
 
+# Required paths
 parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data'),
                     help="Dataset file")
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
+                    help="Training status")
 
 parser.add_argument("--n_epochs", type=int, default=20, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
@@ -49,44 +53,56 @@ parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of firs
 parser.add_argument("--n_cpu", type=int, default=2, help="number of cpu threads to use during batch generation")
 parser.add_argument('--n_iter_D', type=int, default=5, help='number of D iters per each G iter')
 
-# Check the details
+# WGAN parameters
 parser.add_argument('--clamp_lower', type=float, default=-0.01)
 parser.add_argument('--clamp_upper', type=float, default=0.01)
 
+# Cuda
 parser.add_argument("--cuda", type=bool, default=True,
                     help="CUDA activation")
 parser.add_argument("--multiplegpu", type=bool, default=True,
                     help="number of cpu threads to use during batch generation")
 parser.add_argument("--num_gpu", type=int, default=2, help="Number of GPUs in case of multiple GPU")
 
+# Model parameters
 parser.add_argument("--latent_dim", type=int, default=32, help="dimensionality of the latent space")
 parser.add_argument("--image_size", type=int, default=32, help="size of each image dimension")
-parser.add_argument("--nc", type=int, default=1, help="Number of channels in the training images. For color images this is 3")
+parser.add_argument("--nc", type=int, default=1,
+                    help="Number of channels in the training images. For color images this is 3")
 parser.add_argument("--nz", type=int, default=64, help="Size of z latent vector (i.e. size of generator input)")
 parser.add_argument("--ngf", type=int, default=32, help="Size of feature maps in generator")
 parser.add_argument("--ndf", type=int, default=32, help="Size of feature maps in discriminator")
 
+# Training
 parser.add_argument("--display_interval", type=int, default=10, help="interval between samples")
 parser.add_argument("--sample_interval", type=int, default=2000, help="interval between generating fake samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=5, help="number of epochs per model save")
 
+# Phase
 parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/'+experimentName),
-                    help="Training status")
+
 opt = parser.parse_args()
 print(opt)
+
+"""
+Initialization
+
+Notes
+-----
+We check some precursor elements such as path and CUDA existence.
+"""
 
 # Create experiments DIR
 if not os.path.exists(opt.expPATH):
     os.system('mkdir {0}'.format(opt.expPATH))
 
 # Random seed for pytorch
-opt.manualSeed = random.randint(1, 10000) # fix seed
+opt.manualSeed = random.randint(1, 10000)  # fix seed
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
@@ -100,37 +116,46 @@ if torch.cuda.is_available() and not opt.cuda:
 # Activate CUDA
 device = torch.device("cuda:0" if opt.cuda else "cpu")
 
-##########################
-### Dataset Processing ###
-##########################
+"""
+Dataset preparation
 
-# data = np.load(os.path.expanduser(opt.DATASETPATH), allow_pickle=True)
+Notes
+-----
+Dataset creation and preprocessing will be done here.
+"""
 
-# We can use an image folder dataset the way we have it setup.
 # Create the dataset
+# torchvision.transforms.Resize: Operation on PIL Image
+# transforms.CenterCrop: Operation on PIL Image
+# transforms.ToTensor: Convert a PIL Image or numpy.ndarray to tensor
+# transforms.Normalize: Normalize a tensor image of size (C, H, W)
+# For transforms.Normalize we use (0.5,), (0.5,) as we have only one channel for MNIST (new range: [-1,1])
+# Read more: https://pytorch.org/docs/stable/torchvision/transforms.html
+# ATTENTION: transforms.ToTensor() is required before transforms.Normalize as transforms.Normalize only operates on
+# Tensors and not PIL images
 datasetTrain = torchvision.datasets.MNIST(root=opt.DATASETPATH, train=True, transform=transforms.Compose([
-                               transforms.Resize(opt.image_size),
-                               transforms.CenterCrop(opt.image_size),
-                               transforms.ToTensor(),
-                               transforms.Normalize((0.5,), (0.5,)),
-                           ]), target_transform=None, download=True)
+    transforms.Resize(opt.image_size),
+    transforms.CenterCrop(opt.image_size),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,)),
+]), target_transform=None, download=True)
 
 # Create the dataloader
 dataloaderTrain = torch.utils.data.DataLoader(datasetTrain, batch_size=opt.batch_size,
-                                         shuffle=True, num_workers=opt.n_cpu)
+                                              shuffle=True, num_workers=opt.n_cpu)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and opt.num_gpu > 0) else "cpu")
 
-
 # Plot some training images
 real_batch = next(iter(dataloaderTrain))
-plt.figure(figsize=(8,8))
+plt.figure(figsize=(8, 8))
 plt.axis("off")
 plt.title("Training Images")
-plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
+plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(), (1, 2, 0)))
 plt.show()
 
+# # Uncomment to investigate data
 # # Generate random samples for test
 # random_samples = next(iter(dataloader_test))
 # feature_size = random_samples.size()[1]
@@ -140,6 +165,24 @@ plt.show()
 ####################
 
 class Generator(nn.Module):
+
+    """
+    The generator of the GAN.
+
+    ...
+
+    Attributes
+    ----------
+    ngpu : int
+        number of gpus
+    main : function
+        the sequential function consists of different layers
+
+    Methods
+    -------
+    forward(input)
+        The forward pass of the network
+    """
     def __init__(self, ngpu):
         super(Generator, self).__init__()
         self.ngpu = ngpu
@@ -166,8 +209,26 @@ class Generator(nn.Module):
         return self.main(input)
 
 
-
 class Discriminator(nn.Module):
+
+    """
+    The discriminator of the GAN.
+
+    ...
+
+    Attributes
+    ----------
+    ngpu : int
+        number of gpus
+    conv1-conv5 : module
+        the convolutional layers
+
+    Methods
+    -------
+    forward(input)
+        The forward pass of the network
+    """
+
     def __init__(self, ngpu):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
@@ -194,25 +255,6 @@ class Discriminator(nn.Module):
         self.conv5 = nn.ModuleDict({
             'conv': nn.Conv2d(opt.ndf * 8, 1, 2, 1, 0, bias=False),
         })
-        # self.main = nn.Sequential(
-        #     # input is (nc) x 64 x 64
-        #     nn.Conv2d(opt.nc, opt.ndf, 4, 2, 1, bias=False),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     # state size. (ndf) x 32 x 32
-        #     nn.Conv2d(opt.ndf, opt.ndf * 2, 4, 2, 1, bias=False),
-        #     nn.BatchNorm2d(opt.ndf * 2),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     # state size. (ndf*2) x 16 x 16
-        #     nn.Conv2d(opt.ndf * 2, opt.ndf * 4, 4, 2, 1, bias=False),
-        #     nn.BatchNorm2d(opt.ndf * 4),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     # state size. (ndf*4) x 8 x 8
-        #     nn.Conv2d(opt.ndf * 4, opt.ndf * 8, 4, 2, 1, bias=False),
-        #     nn.BatchNorm2d(opt.ndf * 8),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     # state size. (ndf*8) x 4 x 4
-        #     nn.Conv2d(opt.ndf * 8, 1, 4, 1, 0, bias=False),
-        # )
 
     def forward(self, input):
         # Layer 1
@@ -240,32 +282,45 @@ class Discriminator(nn.Module):
         return out
 
 
-
 #################
 ### Functions ###
 #################
 
-def normalizeIm(img):
-    """
-    Normalize an image into the range of [0,1]
-    """
-    minIm = float(img.min())
-    maxIm = float(img.max())
-    np.divide(np.add(img,-minIm), maxIm - minIm + 1e-6)
-
 def discriminator_accuracy(predicted, y_true):
     """
-    The discriminator accuracy on samples
-    :param predicted: The predicted labels
-    :param y_true: The gorund truth labels
-    :return: Accuracy
+    The discriminator accuracy on samples.
+
+    Parameters:
+
+    - `predicted`: The predicted labels.
+    - `y_true`: The gorund truth labels.
+
+
+    Return the values:
+
+    - Accuracy: possibly modified from the parameter `context`;
+
+    Not necessary for training.
     """
+
     total = y_true.size(0)
     correct = (torch.abs(predicted - y_true) <= 0.5).sum().item()
     accuracy = 100.0 * correct / total
     return accuracy
 
+
 def weights_init(m):
+    """
+    Weight initialization.
+
+    Parameters:
+
+    - `m`: The weights.
+
+    Return the values by changing them in-place:
+
+    - Weights: initialized weights`;
+    """
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         nn.init.normal_(m.weight.data, 0.0, 0.02)
@@ -274,9 +329,28 @@ def weights_init(m):
         nn.init.constant_(m.bias.data, 0)
 
 
-#############
-### Model ###
-#############
+"""
+Model creation
+
+How To Do This
+======================
+(See the individual classes, methods, and attributes for details.)
+
+1. Initialize generator and discriminator::
+
+   Generator(opt.num_gpu).to(device)
+   Discriminator(opt.num_gpu).to(device)
+
+2. Create parallel processing with ``nn.DataParallel``.
+
+3. Create optimizers::
+
+    optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
+    optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
+
+"""
 
 # Initialize generator and discriminator
 generatorModel = Generator(opt.num_gpu).to(device)
@@ -287,13 +361,10 @@ Tensor = torch.FloatTensor
 one = torch.FloatTensor([1])
 mone = one * -1
 
-
 if torch.cuda.device_count() > 1 and opt.multiplegpu:
-
-  gpu_idx = list(range(opt.num_gpu))
-  generatorModel = nn.DataParallel(generatorModel, device_ids=[gpu_idx[-1]])
-  discriminatorModel = nn.DataParallel(discriminatorModel, device_ids=[gpu_idx[-1]])
-
+    gpu_idx = list(range(opt.num_gpu))
+    generatorModel = nn.DataParallel(generatorModel, device_ids=[gpu_idx[-1]])
+    discriminatorModel = nn.DataParallel(discriminatorModel, device_ids=[gpu_idx[-1]])
 
 if torch.cuda.is_available():
     """
@@ -319,13 +390,29 @@ real_label = 1
 fake_label = 0
 
 # Optimizers
-optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
+optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
 optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
                                weight_decay=opt.weight_decay)
 
-################
-### TRAINING ###
-################
+"""
+Training
+
+1. Initialize generator and discriminator::
+
+   Generator(opt.num_gpu).to(device)
+   Discriminator(opt.num_gpu).to(device)
+
+2. Create parallel processing with ``nn.DataParallel``.
+
+3. Create optimizers::
+
+    optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
+    optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
+
+"""
 if opt.training:
 
     epoch_start = 0
@@ -448,29 +535,30 @@ if opt.training:
             errG = -torch.mean(discriminatorModel(fake_samples).view(-1)).view(1)
             errG.backward()
 
-            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
+            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in
+            # -pytorch/4903/4
             optimizer_G.step()
             gen_iterations += 1
 
             if iters % opt.display_interval == 0:
-                    print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f'
-                          % (epoch + 1, opt.n_epochs, i, len(dataloaderTrain),
-                             errD.item(), errG.item()), flush=True)
+                print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f'
+                      % (epoch + 1, opt.n_epochs, i, len(dataloaderTrain),
+                         errD.item(), errG.item()), flush=True)
 
-                        # Save Losses for plotting later
-                    G_losses.append(errG.item())
-                    D_losses.append(errD.item())
+                # Save Losses for plotting later
+                G_losses.append(errG.item())
+                D_losses.append(errD.item())
 
-                    # Check how the generator is doing by saving G's output on fixed_noise
-                    if (iters % opt.sample_interval == 0) or ((epoch == opt.n_epochs - 1) and (i == len(dataloaderTrain) - 1)):
-                        with torch.no_grad():
-                            fake = generatorModel(fixed_noise).detach().cpu()
-                            gridimg = np.transpose(
-                                    vutils.make_grid(fake.to(device)[:64], padding=5, normalize=True).cpu(),
-                                    (1, 2, 0)).data.numpy()
-                            plt.imsave(os.path.join(opt.expPATH, "img_%d.png" % (iters)), gridimg)
-                        img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
-
+                # Check how the generator is doing by saving G's output on fixed_noise
+                if (iters % opt.sample_interval == 0) or (
+                        (epoch == opt.n_epochs - 1) and (i == len(dataloaderTrain) - 1)):
+                    with torch.no_grad():
+                        fake = generatorModel(fixed_noise).detach().cpu()
+                        gridimg = np.transpose(
+                            vutils.make_grid(fake.to(device)[:64], padding=5, normalize=True).cpu(),
+                            (1, 2, 0)).data.numpy()
+                        plt.imsave(os.path.join(opt.expPATH, "img_%d.png" % (iters)), gridimg)
+                    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
 
         # End of epoch
         epoch_end = time.time()
@@ -491,81 +579,18 @@ if opt.training:
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
 
-    # np.save('G_losses', np.array(G_losses), allow_pickle=True)
-    # np.save('D_losses', np.array(D_losses), allow_pickle=True)
-
-    # # Plot losses
-    # plt.figure(figsize=(10, 5))
-    # plt.title("Generator and Discriminator Loss During Training")
-    # plt.plot(G_losses, label="G")
-    # plt.plot(D_losses, label="D")
-    # plt.xlabel("iterations")
-    # plt.ylabel("Loss")
-    # plt.legend()
-    # plt.show()
-    #
-    # # Figures
-    # fig = plt.figure(figsize=(8, 8))
-    # ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
-    # ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
-    # plt.show()
-    #
-    #
-    # #### Image Comparison ####
-    # # Grab a batch of real images from the dataloader
-    # real_batch = next(iter(dataloader))
-    #
-    # # Plot the real images
-    # plt.figure(figsize=(15, 15))
-    # plt.subplot(1, 2, 1)
-    # plt.axis("off")
-    # plt.title("Real Images")
-    # plt.imshow(
-    #     np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(), (1, 2, 0)))
-    #
-    # # Plot the fake images from the last epoch
-    # plt.subplot(1, 2, 2)
-    # plt.axis("off")
-    # plt.title("Fake Images")
-    # plt.imshow(np.transpose(img_list[-1], (1, 2, 0)))
-    # plt.show()
-
-if opt.finetuning:
-
-    # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.PATH, "model_epoch_100.pth"))
-
-    # Setup model
-    generatorModel = Generator()
-    discriminatorModel = Discriminator()
-
-    if opt.cuda:
-        generatorModel.cuda()
-        discriminatorModel.cuda()
-
-    # Setup optimizers
-    optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-    optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-
-    # Load models
-    generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
-    discriminatorModel.load_state_dict(checkpoint['Discriminator_state_dict'])
-
-    # Load optimizers
-    optimizer_G.load_state_dict(checkpoint['optimizer_G_state_dict'])
-    optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
-
-    # Load losses
-    g_loss = checkpoint['g_loss']
-    d_loss = checkpoint['d_loss']
-
-    # Load epoch number
-    epoch = checkpoint['epoch']
-
-    generatorModel.eval()
-    discriminatorModel.eval()
-
 if opt.generate:
+    """
+    The generation part.
+    
+    1. Load model
+    2. Create fake samples
+    3. Save images:
+    
+        - Output images' range should be in [0,1] 
+        - Output images' size should be as [NWHC]
+    
+    """
 
     # Check cuda
     if torch.cuda.is_available() and not opt.cuda:
@@ -603,7 +628,6 @@ if opt.generate:
     plt.imshow(
         np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(), (1, 2, 0)))
 
-
     # Generate a batch of fake images
     z = torch.randn(opt.batch_size, opt.nz, 1, 1, device=device)
     fake = generatorModel(z)
@@ -640,36 +664,13 @@ if opt.generate:
         fake_imgs = np.transpose(fake_imgs, (0, 2, 3, 1))
 
         gen_samples[i * opt.batch_size:(i + 1) * opt.batch_size, :] = fake_imgs
-        if (i+1) % 10 == 0:
+        if (i + 1) % 10 == 0:
             print('processed {}-th batch'.format(i))
         # Check to see if there is any nan
         assert (gen_samples[i, :] != gen_samples[i, :]).any() == False
 
     gen_samples = np.delete(gen_samples, np.s_[(i + 1) * opt.batch_size:], 0)
-    print('type(gen_samples)', type(gen_samples),gen_samples.shape)
+    print('type(gen_samples)', type(gen_samples), gen_samples.shape)
     gen_samples = gen_samples.astype(np.float32)
     np.save(os.path.join(opt.expPATH, "fakeimages.npy"), gen_samples, allow_pickle=False)
     print('type(gen_samples)', type(gen_samples), gen_samples.shape)
-
-
-if opt.evaluate:
-    # Load synthetic data
-    gen_samples = np.load(os.path.join(opt.expPATH, "synthetic.npy"), allow_pickle=False)
-
-    # Load real data
-    real_samples = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
-
-    # Dimenstion wise probability
-    prob_real = np.mean(real_samples, axis=0)
-    prob_syn = np.mean(gen_samples, axis=0)
-
-    p1 = plt.scatter(prob_real, prob_syn, c="b", alpha=0.5, label="WGAN")
-    x_max = max(np.max(prob_real), np.max(prob_syn))
-    x = np.linspace(0, x_max + 0.1, 1000)
-    p2 = plt.plot(x, x, linestyle='-', color='k', label="Ideal")  # solid
-    plt.tick_params(labelsize=12)
-    plt.legend(loc=2, prop={'size': 15})
-    # plt.title('Scatter plot p')
-    # plt.xlabel('x')
-    # plt.ylabel('y')
-    plt.show()
