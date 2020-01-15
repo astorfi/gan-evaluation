@@ -1,3 +1,45 @@
+"""
+Siamese neural networks for GAN evaluation,
+this code defines the following classes:
+
+    - `SiameseDataset`, a class to prepair the dataset for training
+    - `Model`, The neural network model used in Siamese architecture
+    - `ContrastiveLoss`, The specific loss function object used to train the Siamese architecture
+
+Exception classes:
+
+    ``EMPTY``
+
+Functions:
+
+    - `weights_init`: Initialize network weights
+
+
+How To Use This Code
+======================
+(See the individual classes, methods, and attributes for details.)
+
+1. TRAIN Siamese network
+
+    a) Split the real dataset into two training and validation sets.
+    b) DO the necessary preprocessing
+    c) While training, test on the validation set (not train!) to see if things are going well!
+
+2. After successful training, GENERATE the features for real and fake samples.
+
+    a) Input the real samples (Use a set that never been used for training) to the network and store the output
+    features (main part) aligned with the associated samples (images) and labels (for faster and easier access in
+    future usage).
+    b) DO the above for fake samples (images) except we do not have any label for fake samples.
+    c) Compare all fake samples output features with all real samples output features and store the distances (for
+    future faster access and processing)
+
+3. EVALUATION
+
+    a)
+
+"""
+
 import argparse
 import os
 import numpy as np
@@ -8,9 +50,6 @@ import os
 from subprocess import call
 import matplotlib.pyplot as plt
 from sklearn import metrics
-import json
-
-import PIL.ImageOps
 
 # Pytorch library
 import torchvision
@@ -33,6 +72,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data'),
                     help="Dataset file")
+
+"""
+The code parameters
+
+Notes
+-----
+Here, we define necessary parameters that we use in the code and store them in arg parser.
+"""
 
 parser.add_argument("--n_epochs", type=int, default=5, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
@@ -90,10 +137,32 @@ if torch.cuda.is_available() and not opt.cuda:
 # Activate CUDA
 device = torch.device("cuda:0" if opt.cuda else "cpu")
 
-##########################
-### Dataset Processing ###
-##########################
+"""
+Training preparation
 
+Notes
+-----
+This is NOT the training phase. This part only prepares the data and model for training.
+
+How To Do This
+======================
+(See the individual classes, methods, and attributes for details.)
+
+1. Create train and test data objects as 'MNISTTrain' and 'MNISTTest':
+
+    MNISTTest: It is basically the validation set to check if the training going well well or not.
+   
+
+2. Create Siamese network model::
+
+    class SiameseDataset(torch.utils.data.Dataset):
+        def __init__(self, dataset, transform=None):
+            self.data = dataset.data
+            self.targets = dataset.targets
+            self.dataSize = self.data.shape[0]
+            self.transform = transform
+                               
+"""
 
 if opt.training:
 
@@ -110,21 +179,63 @@ if opt.training:
 
 
     class SiameseDataset(torch.utils.data.Dataset):
-        def __init__(self, dataset, invert_status=True, transform=None):
+        """
+            Siamese dataset preparation.
+
+            ...
+
+            Attributes
+            ----------
+            data : numpy
+                dataset samples
+            targets : numpy
+                dataset labels
+            dataSize: int
+                number of samples
+            transform: object
+                the required transforms (preprocessing)
+
+
+            Methods
+            -------
+
+            """
+
+        def __init__(self, dataset, transform=None):
             self.data = dataset.data
             self.targets = dataset.targets
             self.dataSize = self.data.shape[0]
             self.transform = transform
-            self.invert_status = invert_status
-            self.transfortoPIL = torchvision.transforms.ToPILImage()
 
         def __getitem__(self, index):
 
+            """
+                The function that create genuine and impostor pairs.
+
+                Parameters:
+
+                - `index`: An index from the data.
+
+                Return the values:
+
+                - img0: first sample (image, etc) of the pair;
+                - img1: second sample (image, etc) of the pair;
+                - label: pair label (0: genuine 1: impostor);
+
+                """
+
+            # Take a random index from data
             rand_idx = np.random.randint(self.dataSize, size=1)
+
             # self.data.shape = (N,W,H), self.data[rand_idx].shape = (1,W,H)
+            # Exctract a sample with its associated label
             img0_tuple = (self.data[rand_idx], self.targets[rand_idx])
+
+            # Determine that we generate an importor or genuine pair (with equal prob)
             same_class_status = random.randint(0, 1)
             if same_class_status:
+                # Create genuine pair (pairing same class samples)
+                # Keep going until a sample with the same label is found
                 while True:
                     rand_idx = np.random.randint(self.dataSize, size=1)
                     # keep looping till the same class image is found
@@ -132,6 +243,8 @@ if opt.training:
                     if img0_tuple[1] == img1_tuple[1]:
                         break
             else:
+                # Create impostor pair (pairing samples with different classes)
+                # Keep going until a sample with a different class is found
                 while True:
                     rand_idx = np.random.randint(self.dataSize, size=1)
                     # keep looping till a different class image is found
@@ -147,15 +260,19 @@ if opt.training:
                 img0 = self.transform(img0)
                 img1 = self.transform(img1)
 
-            return img0, img1, torch.from_numpy(np.array([int(img0_tuple[1] != img1_tuple[1])], dtype=np.float32))
+            label = torch.from_numpy(np.array([int(img0_tuple[1] != img1_tuple[1])], dtype=np.float32))
+
+            return img0, img1, label
 
         def __len__(self):
             return self.dataSize
 
 
     # The order of transfor matters
-    # transforms.ToTensor() transform numpy to tensor
     # transforms.ToPILImage() transform tensor to PIL
+    # We do transforms.ToPILImage() first as transforms.Resize and transforms.CenterCrop
+    # only operate on PILImage type
+    # transforms.ToTensor() transform numpy to tensor
     transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize(opt.image_size),
@@ -165,13 +282,13 @@ if opt.training:
     ])
 
     # Train data loader
-    dataset_train_object = SiameseDataset(MNISTTrain, invert_status=True, transform=transform)
+    dataset_train_object = SiameseDataset(MNISTTrain, transform=transform)
     samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_train_object, replacement=True)
     dataloaderTrain = DataLoader(dataset_train_object, batch_size=opt.batch_size,
                                  shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
 
     # Test data loader
-    dataset_test_object = SiameseDataset(MNISTTest, invert_status=True, transform=transform)
+    dataset_test_object = SiameseDataset(MNISTTest, transform=transform)
     samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_test_object, replacement=True)
     dataloaderTest = DataLoader(dataset_test_object, batch_size=opt.batch_size,
                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
@@ -193,6 +310,28 @@ if opt.training:
 ####################
 
 class Model(nn.Module):
+    """
+    Siamese architecture.
+
+    ...
+
+    Attributes
+    ----------
+    ngpu : int
+        number of gpus
+    conv1,conv2,conv3 : layer
+        convolutional layers
+    fc1,fc2: layer
+        fully-connected layers
+
+    Methods
+    -------
+    forward_pass(input)
+        The forward pass of the network
+    forward(input)
+        Contains two forward pass using the same network weights (Siamese)
+    """
+
     def __init__(self, ngpu):
         super(Model, self).__init__()
         self.ngpu = ngpu
@@ -210,16 +349,6 @@ class Model(nn.Module):
             'bn': nn.BatchNorm2d(opt.ndf * 4),
             'activation': nn.LeakyReLU(0.2, inplace=True)
         })
-        # self.conv4 = nn.ModuleDict({
-        #     'conv': nn.Conv2d(opt.ndf * 4, opt.ndf * 8, 4, 2, 1, bias=False),
-        #     'bn': nn.BatchNorm2d(opt.ndf * 8),
-        #     'activation': nn.LeakyReLU(0.2, inplace=True)
-        # })
-        #
-        # self.conv5 = nn.ModuleDict({
-        #     'conv': nn.Conv2d(opt.ndf * 8, opt.ndf * 16, 2, 1, 0, bias=False),
-        #     'bn': nn.BatchNorm2d(opt.ndf * 16),
-        # })
 
         self.fc1 = nn.ModuleDict({
             'dense': nn.Linear(opt.ndf * 4 * 4 * 4, 1024),
@@ -274,12 +403,7 @@ class ContrastiveLoss(torch.nn.Module):
         self.margin = margin
 
     def forward(self, output1, output2, label):
-        try:
-            euclidean_distance = F.pairwise_distance(output1, output2, keepdim=True)
-        except:
-            print(output1.shape)
-            print(output2.shape)
-            sys.exit()
+        euclidean_distance = F.pairwise_distance(output1, output2, keepdim=True)
         loss_contrastive = torch.mean((1 - label) * torch.pow(euclidean_distance, 2) +
                                       (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
 
@@ -395,7 +519,8 @@ if opt.training:
             loss = criterion(out1, out2, labels)
             loss.backward()
 
-            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
+            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in
+            # -pytorch/4903/4
             optimizer.step()
 
             if iter_count % opt.sample_interval == 0:
@@ -430,7 +555,8 @@ if opt.training:
             roc_auc = metrics.roc_auc_score(y_true, y_scores)
             roc_auc = metrics.auc(fpr, tpr)
 
-            # Refer to https://en.wikipedia.org/w/index.php?title=Information_retrieval&oldid=793358396#Average_precision
+            # Refer to https://en.wikipedia.org/w/index.php?title=Information_retrieval&oldid=793358396
+            # #Average_precision
             ap = metrics.average_precision_score(y_true, y_scores)
 
             # AUC and AP reporting
@@ -501,12 +627,10 @@ if opt.generate:
 
 
     class FakeDataset(torch.utils.data.Dataset):
-        def __init__(self, dataset, invert_status=True, transform=None):
+        def __init__(self, dataset, transform=None):
             self.data = dataset
             self.dataSize = self.data.shape[0]
             self.transform = transform
-            self.invert_status = invert_status
-            self.transfortoPIL = torchvision.transforms.ToPILImage()
 
         def __getitem__(self, idx):
             if torch.is_tensor(idx):
@@ -530,7 +654,7 @@ if opt.generate:
         allow_pickle=False)
 
     # Train data loader
-    dataset_fake_object = FakeDataset(fakeData, invert_status=True, transform=transformFake)
+    dataset_fake_object = FakeDataset(fakeData, transform=transformFake)
     samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=dataset_fake_object, replacement=True)
     dataloaderFake = DataLoader(dataset_fake_object, batch_size=opt.batch_size,
                                 shuffle=False, num_workers=2, drop_last=True, sampler=samplerRandom)
@@ -645,6 +769,7 @@ if opt.generate:
                 axarr[i, j].imshow(sel_fake_imgs[i + j])
         plt.show()
 
+    # Section 2 part (b) explained in the beginning of code.
     np.save(os.path.join(opt.expPATH, "real_img_features.npy"), real_img_features, allow_pickle=False)
     np.save(os.path.join(opt.expPATH, "real_img_matrix.npy"), real_img_matrix, allow_pickle=False)
     np.save(os.path.join(opt.expPATH, "real_img_labels.npy"), real_img_labels, allow_pickle=False)
@@ -652,8 +777,12 @@ if opt.generate:
     np.save(os.path.join(opt.expPATH, "fake_img_matrix.npy"), fake_img_matrix, allow_pickle=False)
 
     ####### Generate and save distances ####
-    # Status
+    # Section 2 part (c) explained in the beginning of code.
+
+    # For test and not required
     one_random_fake = False
+
+    # Main
     all_fake = True
 
     if one_random_fake:
@@ -690,9 +819,9 @@ if opt.generate:
     if all_fake:
 
         dist = np.zeros((fake_img_features.shape[0], real_img_features.shape[0]), dtype=np.float32)
-        dist_min = np.zeros((fake_img_features.shape[0], ), dtype=np.float32)
-        label_fake = np.zeros((fake_img_features.shape[0], ), dtype=np.int32)
-        index_min = np.zeros((fake_img_features.shape[0], ), dtype=np.int32)
+        dist_min = np.zeros((fake_img_features.shape[0],), dtype=np.float32)
+        label_fake = np.zeros((fake_img_features.shape[0],), dtype=np.int32)
+        index_min = np.zeros((fake_img_features.shape[0],), dtype=np.int32)
         for j in range(fake_img_features.shape[0]):
             if (j + 1) % 100 == 0:
                 print('Processed {}-th fake image'.format(j))
@@ -710,7 +839,7 @@ if opt.generate:
                         min = euclidean_distance
                         index_min = i
 
-            # The index of the matrched real img
+            # The index of the matched real img
             idx_min[j] = index_min
 
             # The minimum distance of fake image to its real counterpart
@@ -720,7 +849,6 @@ if opt.generate:
             label_fake[j] = real_img_labels[int(index_min)]
 
         np.save(os.path.join(opt.expPATH, "evalDist.npy"), dist, allow_pickle=False)
-
 
 if opt.evaluate:
 
@@ -762,12 +890,12 @@ if opt.evaluate:
     print('calculating minimum distances...')
     # Get the index associated with minimum distance
     idx_sel = np.argmin(evalDist, axis=1)
-    dist_sel = evalDist[np.arange(evalDist.shape[0]),idx_sel]
+    dist_sel = evalDist[np.arange(evalDist.shape[0]), idx_sel]
 
     # Take the detected label
     real_img_labels_matrix = real_img_labels.reshape((1, real_img_labels.shape[0]))
     real_img_labels_matrix = np.repeat(real_img_labels_matrix, fake_img_features.shape[0], axis=0)
-    label_fake = real_img_labels_matrix[np.arange(real_img_labels_matrix.shape[0]),idx_sel].astype(int)
+    label_fake = real_img_labels_matrix[np.arange(real_img_labels_matrix.shape[0]), idx_sel].astype(int)
     print('calculating minimum distances is finished!')
 
     ##########################################
@@ -804,7 +932,7 @@ if opt.evaluate:
     # Plot some samples
     N = 9
     # Skip the first 10 images for reducing bias (10 should be zero if starting from the lowest distance)
-    index_range = np.arange(10,distance_sorted_idx.shape[0], int(distance_sorted_idx.shape[0] / float(N)))
+    index_range = np.arange(10, distance_sorted_idx.shape[0], int(distance_sorted_idx.shape[0] / float(N)))
     index_fake_sample = distance_sorted_idx[index_range]
     index_real_sample = idx_sel[distance_sorted_idx[index_range]]
     fake_img_list = []
@@ -831,8 +959,9 @@ if opt.evaluate:
     for ax, im in zip(grid, fake_img_list):
         # Iterating over the grid returns the Axes.
         ax.imshow(im)
-        ax.set_title('D: {:.2f}, L: {}'.format(dist_sel[index_fake_sample[count]],label_fake[index_fake_sample[count]]))
-        count+= 1
+        ax.set_title(
+            'D: {:.2f}, L: {}'.format(dist_sel[index_fake_sample[count]], label_fake[index_fake_sample[count]]))
+        count += 1
 
     plt.show()
 
@@ -848,8 +977,6 @@ if opt.evaluate:
         count += 1
 
     plt.show()
-
-
 
     sys.exit()
 
