@@ -4,6 +4,10 @@
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/alerts/) -->
 
 [![Name](https://img.shields.io/github/license/astorfi/gan-evaluation)](https://github.com/astorfi/gan-evaluation/blob/master/LICENSE.md)
+[![Contributors](https://img.shields.io/github/contributors/astorfi/gan-evaluation)](https://github.com/astorfi/gan-evaluation/graphs/contributors)
+[![arXiv](https://img.shields.io/badge/arXiv-2010.03549-b31b1b.svg)](https://arxiv.org/abs/2010.03549)
+
+
 
 
 
