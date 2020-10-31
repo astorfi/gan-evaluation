@@ -1,7 +1,7 @@
 # On the Evaluation of Generative Adversarial Networks By Discriminative Models
 
-[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/context:python)
-[![Total alerts](https://img.shields.io/lgtm/alerts/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/alerts/)
+<!-- [![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/context:python)
+[![Total alerts](https://img.shields.io/lgtm/alerts/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/alerts/) -->
 
 
 This repository contains an implementation of "On the Evaluation of Generative Adversarial Networks By Discriminative Models".
