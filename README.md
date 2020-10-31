@@ -3,7 +3,7 @@
 <!-- [![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/context:python)
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/alerts/) -->
 
-[![Language grade: Python](https://img.shields.io/apm/l/gan-evaluation?color=asd&label=ss&logo=asd&logoColor=asd&style=plastic)](https://github.com/astorfi/gan-evaluation/blob/master/LICENSE.md)
+[![Name](https://img.shields.io/github/license/astorfi/gan-evaluation)](https://github.com/astorfi/gan-evaluation/blob/master/LICENSE.md)
 
 
 
