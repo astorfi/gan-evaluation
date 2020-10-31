@@ -3,6 +3,10 @@
 <!-- [![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/context:python)
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/astorfi/cor-gan.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/astorfi/cor-gan/alerts/) -->
 
+[![Language grade: Python](https://img.shields.io/apm/l/gan-evaluation?color=asd&label=ss&logo=asd&logoColor=asd&style=plastic)](https://github.com/astorfi/gan-evaluation/blob/master/LICENSE.md)
+
+
+
 
 This repository contains an implementation of "On the Evaluation of Generative Adversarial Networks By Discriminative Models".
 
