@@ -59,7 +59,7 @@ Please refer to [this link](https://pytorch.org/) for further information.
 
 ### Datasets
 
-You need to download and process the datasets mentioned in the paper. **The code in this repository is for MNIST dataset only**.
+You need to download and process the datasets mentioned in the paper. **The code in this repository is for MNIST and [CELEB A](http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html) datasets only**.
 
 
 ## Collaborators
