@@ -25,14 +25,9 @@ Table of contents
 
 <!--ts-->
    * [Paper Summary](#paper-summary)
-   * [Aspects of The Work](#aspects-of-the-work)
-      * [Synthetic Data Generation](#Synthetic-Data-Generation)
-      * [Privacy](#Privacy)
-      * [Data Fidelity](#data-fidelity)
    * [Running the Code](#Running-the-Code)
       * [Prerequisites](#Prerequisites)
       * [Datasets](#Datasets)
-      * [Training](#Training)
    * [Collaborators](#Collaborators)
 <!--te-->
 
